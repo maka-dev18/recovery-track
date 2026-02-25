@@ -1,5 +1,6 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { admin } from 'better-auth/plugins';
 import { sveltekitCookies } from 'better-auth/svelte-kit';
 import { env } from '$env/dynamic/private';
 import { getRequestEvent } from '$app/server';
@@ -10,5 +11,11 @@ export const auth = betterAuth({
 	secret: env.BETTER_AUTH_SECRET,
 	database: drizzleAdapter(db, { provider: 'sqlite' }),
 	emailAndPassword: { enabled: true },
-	plugins: [sveltekitCookies(getRequestEvent)] // make sure this is the last plugin in the array
+	plugins: [
+		admin({
+			defaultRole: 'patient',
+			adminRoles: ['admin']
+		}),
+		sveltekitCookies(getRequestEvent)
+	]
 });

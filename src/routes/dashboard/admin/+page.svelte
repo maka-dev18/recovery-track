@@ -1,0 +1,1030 @@
+<script lang="ts">
+	import { enhance } from "$app/forms";
+	import { invalidateAll } from "$app/navigation";
+	import { Badge } from "$lib/components/ui/badge";
+	import { Button } from "$lib/components/ui/button";
+	import * as Card from "$lib/components/ui/card";
+	import { Input } from "$lib/components/ui/input";
+	import { Label } from "$lib/components/ui/label";
+	import * as Table from "$lib/components/ui/table";
+	import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
+	import type { ActionData, PageServerData } from "./$types";
+
+	let { data, form }: { data: PageServerData; form: ActionData } = $props();
+	let activeAction = $state<string | null>(null);
+	let historyPatientId = $state<string>("");
+	let historyFile = $state<File | null>(null);
+	let historyUploading = $state(false);
+	let historyMessage = $state<string | null>(null);
+	let historyError = $state<string | null>(null);
+	let activeReprocessFileId = $state<string | null>(null);
+	let historyFileInput = $state<HTMLInputElement | null>(null);
+
+	function pendingForm(node: HTMLFormElement, actionName: string) {
+		return enhance(node, () => {
+			activeAction = actionName;
+
+			return async ({ update }) => {
+				try {
+					await update();
+				} finally {
+					activeAction = null;
+				}
+			};
+		});
+	}
+
+	function formatDate(value: Date | string | null | undefined) {
+		if (!value) return "—";
+		const date = typeof value === "string" ? new Date(value) : value;
+		return new Intl.DateTimeFormat("en-US", {
+			month: "short",
+			day: "numeric",
+			hour: "numeric",
+			minute: "2-digit"
+		}).format(date);
+	}
+
+	function formatBytes(size: number) {
+		if (size < 1024) return `${size} B`;
+		if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+		return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	function resolveErrorMessage(error: unknown, fallback: string) {
+		if (error instanceof Error) return error.message;
+		return fallback;
+	}
+
+	function resetUploadFeedback() {
+		historyMessage = null;
+		historyError = null;
+	}
+
+	async function uploadHistoryFile() {
+		resetUploadFeedback();
+		if (!data.aiFeatures.historyIngestEnabled) {
+			historyError = "Historical rehab ingestion is currently disabled.";
+			return;
+		}
+
+		if (!historyPatientId) {
+			historyError = "Select a patient before uploading.";
+			return;
+		}
+
+		if (!historyFile) {
+			historyError = "Choose a PDF or CSV file to upload.";
+			return;
+		}
+
+		const mimeType = historyFile.type || "application/octet-stream";
+		const isPdf = mimeType.includes("pdf") || historyFile.name.toLowerCase().endsWith(".pdf");
+		const isCsv = mimeType.includes("csv") || historyFile.name.toLowerCase().endsWith(".csv");
+		if (!isPdf && !isCsv) {
+			historyError = "Only PDF and CSV files are supported.";
+			return;
+		}
+
+		historyUploading = true;
+		try {
+			const presignResponse = await fetch(`/api/admin/patients/${historyPatientId}/history/presign`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					fileName: historyFile.name,
+					mimeType,
+					byteSize: historyFile.size
+				})
+			});
+
+			const presignPayload = await presignResponse.json();
+			if (!presignResponse.ok) {
+				throw new Error(presignPayload?.message ?? "Failed to prepare upload URL.");
+			}
+
+			const uploadResponse = await fetch(presignPayload.uploadUrl as string, {
+				method: "PUT",
+				headers: {
+					"content-type": mimeType
+				},
+				body: historyFile
+			});
+
+			if (!uploadResponse.ok) {
+				throw new Error("Cloud upload failed before metadata registration.");
+			}
+
+			const completeResponse = await fetch(`/api/admin/patients/${historyPatientId}/history/complete`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					key: presignPayload.key,
+					fileName: historyFile.name,
+					mimeType,
+					byteSize: historyFile.size
+				})
+			});
+
+			const completePayload = await completeResponse.json();
+			if (!completeResponse.ok) {
+				throw new Error(completePayload?.message ?? "Could not finalize upload metadata.");
+			}
+
+			historyMessage = completePayload?.message ?? "History file uploaded and queued.";
+			historyFile = null;
+			if (historyFileInput) {
+				historyFileInput.value = "";
+			}
+			await invalidateAll();
+		} catch (error) {
+			historyError = resolveErrorMessage(error, "History upload failed.");
+		} finally {
+			historyUploading = false;
+		}
+	}
+
+	async function reprocessHistoryFile(patientId: string, fileId: string) {
+		resetUploadFeedback();
+		if (!data.aiFeatures.historyIngestEnabled) {
+			historyError = "Historical rehab ingestion is currently disabled.";
+			return;
+		}
+
+		activeReprocessFileId = fileId;
+
+		try {
+			const response = await fetch(`/api/admin/patients/${patientId}/history/reprocess`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ fileId })
+			});
+			const payload = await response.json();
+			if (!response.ok) {
+				throw new Error(payload?.message ?? "Reprocess request failed.");
+			}
+
+			historyMessage = payload?.message ?? "Reprocess queued.";
+			await invalidateAll();
+		} catch (error) {
+			historyError = resolveErrorMessage(error, "Unable to queue reprocess.");
+		} finally {
+			activeReprocessFileId = null;
+		}
+	}
+</script>
+
+<div class="space-y-6">
+	{#if form?.message}
+		<div
+			class="border-destructive/30 bg-destructive/10 text-destructive rounded-lg border px-4 py-3 text-sm"
+		>
+			{form.message}
+		</div>
+	{:else if form?.success}
+		<div
+			class="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700"
+		>
+			{form.success}
+		</div>
+	{/if}
+
+	<section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header class="space-y-1">
+				<Card.Description>Total users</Card.Description>
+				<Card.Title class="text-3xl">{data.stats.totalUsers}</Card.Title
+				>
+			</Card.Header>
+		</Card.Root>
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header class="space-y-1">
+				<Card.Description>Therapists</Card.Description>
+				<Card.Title class="text-3xl">{data.stats.therapists}</Card.Title
+				>
+			</Card.Header>
+		</Card.Root>
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header class="space-y-1">
+				<Card.Description>Patients</Card.Description>
+				<Card.Title class="text-3xl">{data.stats.patients}</Card.Title>
+			</Card.Header>
+		</Card.Root>
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header class="space-y-1">
+				<Card.Description>Associates</Card.Description>
+				<Card.Title class="text-3xl">{data.stats.associates}</Card.Title
+				>
+			</Card.Header>
+		</Card.Root>
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header class="space-y-1">
+				<Card.Description>Forced resets</Card.Description>
+				<Card.Title class="text-3xl"
+					>{data.stats.forcedPasswordResets}</Card.Title
+				>
+			</Card.Header>
+		</Card.Root>
+	</section>
+
+	<section class="grid gap-6 xl:grid-cols-2">
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Create platform user</Card.Title>
+				<Card.Description>
+					Create admins, therapists, patients, and associates with
+					default credentials.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content>
+				<form
+					method="POST"
+					action="?/createUser"
+					class="grid gap-4"
+					use:pendingForm={"create-user"}
+				>
+					<div class="grid gap-2">
+						<Label for="new-name">Full name</Label>
+						<Input
+							id="new-name"
+							name="name"
+							autocomplete="name"
+							required
+						/>
+					</div>
+					<div class="grid gap-2">
+						<Label for="new-email">Email</Label>
+						<Input
+							id="new-email"
+							name="email"
+							type="email"
+							autocomplete="email"
+							required
+						/>
+					</div>
+					<div class="grid gap-2">
+						<Label for="new-password">Default password</Label>
+						<Input
+							id="new-password"
+							name="password"
+							type="password"
+							autocomplete="new-password"
+							required
+						/>
+					</div>
+					<div class="grid gap-2">
+						<Label for="new-role">Role</Label>
+						<select
+							id="new-role"
+							name="role"
+							class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+						>
+							{#each data.roles as role (role)}
+								<option value={role}>{role}</option>
+							{/each}
+						</select>
+					</div>
+					<label class="flex items-center gap-2 text-sm font-medium">
+						<input
+							type="checkbox"
+							name="forcePasswordChange"
+							class="border-input text-primary focus-visible:ring-ring size-4 rounded border"
+							checked
+						/>
+						Force password change on first login
+					</label>
+					<Button
+						type="submit"
+						class="w-full bg-blue-600 text-white hover:bg-blue-700"
+						disabled={activeAction === "create-user"}
+					>
+						{#if activeAction === "create-user"}
+							<LoaderCircleIcon class="size-4 animate-spin" />
+							Creating user...
+						{:else}
+							Create user
+						{/if}
+					</Button>
+				</form>
+			</Card.Content>
+		</Card.Root>
+
+		<div class="grid gap-6">
+			<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+				<Card.Header>
+					<Card.Title>Assign therapist to patient</Card.Title>
+					<Card.Description
+						>Map therapist caseloads for dashboard visibility.</Card.Description
+					>
+				</Card.Header>
+				<Card.Content>
+					<form
+						method="POST"
+						action="?/assignTherapist"
+						class="grid gap-4"
+						use:pendingForm={"assign-therapist"}
+					>
+						<div class="grid gap-2">
+							<Label for="therapistId">Therapist</Label>
+							<select
+								id="therapistId"
+								name="therapistId"
+								required
+								class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+							>
+								<option value="">Select therapist</option>
+								{#each data.therapists as therapist (therapist.id)}
+									<option value={therapist.id}
+										>{therapist.name} ({therapist.email})</option
+									>
+								{/each}
+							</select>
+						</div>
+						<div class="grid gap-2">
+							<Label for="therapist-patientId">Patient</Label>
+							<select
+								id="therapist-patientId"
+								name="patientId"
+								required
+								class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+							>
+								<option value="">Select patient</option>
+								{#each data.patients as patient (patient.id)}
+									<option value={patient.id}
+										>{patient.name} ({patient.email})</option
+									>
+								{/each}
+							</select>
+						</div>
+						<Button
+							type="submit"
+							variant="outline"
+							class="border-blue-200 text-blue-700 hover:bg-blue-50"
+							disabled={activeAction === "assign-therapist"}
+						>
+							{#if activeAction === "assign-therapist"}
+								<LoaderCircleIcon class="size-4 animate-spin" />
+								Assigning...
+							{:else}
+								Assign therapist
+							{/if}
+						</Button>
+					</form>
+				</Card.Content>
+			</Card.Root>
+
+			<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+				<Card.Header>
+					<Card.Title>Link associate to patient</Card.Title>
+					<Card.Description
+						>Capture family and support-network relationships.</Card.Description
+					>
+				</Card.Header>
+				<Card.Content>
+					<form
+						method="POST"
+						action="?/assignAssociate"
+						class="grid gap-4"
+						use:pendingForm={"assign-associate"}
+					>
+						<div class="grid gap-2">
+							<Label for="associateId">Associate</Label>
+							<select
+								id="associateId"
+								name="associateId"
+								required
+								class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+							>
+								<option value="">Select associate</option>
+								{#each data.associates as associate (associate.id)}
+									<option value={associate.id}
+										>{associate.name} ({associate.email})</option
+									>
+								{/each}
+							</select>
+						</div>
+						<div class="grid gap-2">
+							<Label for="associate-patientId">Patient</Label>
+							<select
+								id="associate-patientId"
+								name="patientId"
+								required
+								class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+							>
+								<option value="">Select patient</option>
+								{#each data.patients as patient (patient.id)}
+									<option value={patient.id}
+										>{patient.name} ({patient.email})</option
+									>
+								{/each}
+							</select>
+						</div>
+						<div class="grid gap-2">
+							<Label for="relationshipLabel"
+								>Relationship label</Label
+							>
+							<Input
+								id="relationshipLabel"
+								name="relationshipLabel"
+								placeholder="family, sibling, sponsor"
+							/>
+						</div>
+						<Button
+							type="submit"
+							variant="outline"
+							class="border-blue-200 text-blue-700 hover:bg-blue-50"
+							disabled={activeAction === "assign-associate"}
+						>
+							{#if activeAction === "assign-associate"}
+								<LoaderCircleIcon class="size-4 animate-spin" />
+								Linking...
+							{:else}
+								Link associate
+							{/if}
+						</Button>
+					</form>
+				</Card.Content>
+			</Card.Root>
+		</div>
+	</section>
+
+	<section class="grid gap-6 xl:grid-cols-2">
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Historical rehab uploads</Card.Title>
+				<Card.Description>
+					Upload prior rehab PDFs/CSVs so AI scoring can use baseline history.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				{#if !data.aiFeatures.historyIngestEnabled}
+					<div class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+						Historical rehab ingestion is disabled. Upload and reprocess actions are unavailable.
+					</div>
+				{/if}
+				{#if historyError}
+					<div class="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm">
+						{historyError}
+					</div>
+				{:else if historyMessage}
+					<div class="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+						{historyMessage}
+					</div>
+				{/if}
+				<div class="grid gap-2">
+					<Label for="history-patient">Patient</Label>
+					<select
+						id="history-patient"
+						bind:value={historyPatientId}
+						disabled={!data.aiFeatures.historyIngestEnabled || historyUploading}
+						class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+					>
+						<option value="">Select patient</option>
+						{#each data.patients as patient (patient.id)}
+							<option value={patient.id}>{patient.name} ({patient.email})</option>
+						{/each}
+					</select>
+					<p class="text-muted-foreground text-xs">Only patient records are eligible for historical rehab ingestion.</p>
+				</div>
+				<div class="grid gap-2">
+					<Label for="history-file">Rehab file (PDF/CSV)</Label>
+					<Input
+						id="history-file"
+						type="file"
+						accept=".pdf,.csv,text/csv,application/pdf"
+						bind:ref={historyFileInput}
+						disabled={!data.aiFeatures.historyIngestEnabled || historyUploading}
+						onchange={(event) => {
+							const target = event.currentTarget as HTMLInputElement;
+							historyFile = target.files?.[0] ?? null;
+						}}
+					/>
+					<p class="text-muted-foreground text-xs">Max file size is enforced by backend policy before upload.</p>
+				</div>
+				<Button
+					type="button"
+					class="w-full bg-blue-600 text-white hover:bg-blue-700"
+					disabled={!data.aiFeatures.historyIngestEnabled || historyUploading || !historyPatientId || !historyFile}
+					onclick={uploadHistoryFile}
+				>
+					{#if historyUploading}
+						<LoaderCircleIcon class="size-4 animate-spin" />
+						Uploading and queuing parse...
+					{:else}
+						Upload historical file
+					{/if}
+				</Button>
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Parser queue</Card.Title>
+				<Card.Description>Latest background jobs for file parsing and retries.</Card.Description>
+			</Card.Header>
+			<Card.Content>
+				<div class="overflow-x-auto">
+					<Table.Root>
+						<Table.Header>
+							<Table.Row>
+								<Table.Head>Type</Table.Head>
+								<Table.Head>Status</Table.Head>
+								<Table.Head>Attempts</Table.Head>
+								<Table.Head>Run after</Table.Head>
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{#if data.queueJobs.length === 0}
+								<Table.Row>
+									<Table.Cell colspan={4} class="text-muted-foreground py-6 text-center">
+										No jobs in queue yet.
+									</Table.Cell>
+								</Table.Row>
+							{:else}
+								{#each data.queueJobs as job (job.id)}
+									<Table.Row>
+										<Table.Cell>{job.type}</Table.Cell>
+										<Table.Cell>
+											<Badge variant="outline">{job.status}</Badge>
+										</Table.Cell>
+										<Table.Cell>{job.attempts}</Table.Cell>
+										<Table.Cell>{formatDate(job.runAfter)}</Table.Cell>
+									</Table.Row>
+								{/each}
+							{/if}
+						</Table.Body>
+					</Table.Root>
+				</div>
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	<section class="grid gap-6">
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>User directory</Card.Title>
+				<Card.Description
+					>All provisioned users and role metadata.</Card.Description
+				>
+			</Card.Header>
+			<Card.Content>
+				<div class="overflow-x-auto">
+					<Table.Root>
+						<Table.Header>
+							<Table.Row>
+								<Table.Head>Name</Table.Head>
+								<Table.Head>Email</Table.Head>
+								<Table.Head>Role</Table.Head>
+								<Table.Head>Credentials</Table.Head>
+								<Table.Head>Manage</Table.Head>
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{#each data.users as managedUser (managedUser.id)}
+								<Table.Row>
+									<Table.Cell class="font-medium"
+										>{managedUser.name}</Table.Cell
+									>
+									<Table.Cell>{managedUser.email}</Table.Cell>
+									<Table.Cell>
+										<Badge
+											class="bg-blue-100 text-blue-700 hover:bg-blue-100"
+											>{managedUser.role}</Badge
+										>
+									</Table.Cell>
+									<Table.Cell>
+										{#if managedUser.mustChangePassword}
+											<Badge
+												variant="outline"
+												class="border-blue-300 text-blue-700"
+												>Change required</Badge
+											>
+										{:else}
+											<Badge variant="secondary"
+												>Up to date</Badge
+											>
+										{/if}
+									</Table.Cell>
+									<Table.Cell>
+										<div class="grid gap-2">
+											<form
+												method="POST"
+												action="?/updateUser"
+												class="grid gap-2 md:grid-cols-[1fr_170px_auto]"
+												use:pendingForm={`update-user-${managedUser.id}`}
+											>
+												<input
+													type="hidden"
+													name="userId"
+													value={managedUser.id}
+												/>
+												<Input
+													name="name"
+													value={managedUser.name}
+													required
+												/>
+												<select
+													name="role"
+													value={managedUser.role}
+													class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+												>
+													{#each data.roles as role (role)}
+														<option value={role}
+															>{role}</option
+														>
+													{/each}
+												</select>
+												<Button
+													type="submit"
+													variant="outline"
+													disabled={activeAction ===
+														`update-user-${managedUser.id}`}
+												>
+													{#if activeAction === `update-user-${managedUser.id}`}
+														<LoaderCircleIcon
+															class="size-4 animate-spin"
+														/>
+													{:else}
+														Save
+													{/if}
+												</Button>
+												<label
+													class="text-muted-foreground flex items-center gap-2 text-xs md:col-span-3"
+												>
+													<input
+														type="checkbox"
+														name="forcePasswordChange"
+														checked={managedUser.mustChangePassword}
+														class="border-input text-primary focus-visible:ring-ring size-4 rounded border"
+													/>
+													Force password change
+												</label>
+											</form>
+											<form
+												method="POST"
+												action="?/resetUserPassword"
+												class="grid gap-2 md:grid-cols-[1fr_auto]"
+												use:pendingForm={`reset-password-${managedUser.id}`}
+											>
+												<input
+													type="hidden"
+													name="userId"
+													value={managedUser.id}
+												/>
+												<Input
+													name="newPassword"
+													type="password"
+													autocomplete="new-password"
+													placeholder="New default password"
+													required
+												/>
+												<Button
+													type="submit"
+													variant="outline"
+													class="border-blue-200 text-blue-700 hover:bg-blue-50"
+													disabled={activeAction ===
+														`reset-password-${managedUser.id}`}
+												>
+													{#if activeAction === `reset-password-${managedUser.id}`}
+														<LoaderCircleIcon
+															class="size-4 animate-spin"
+														/>
+													{:else}
+														Reset
+													{/if}
+												</Button>
+												<label
+													class="text-muted-foreground flex items-center gap-2 text-xs md:col-span-2"
+												>
+													<input
+														type="checkbox"
+														name="forcePasswordChange"
+														checked
+														class="border-input text-primary focus-visible:ring-ring size-4 rounded border"
+													/>
+													Force change at next login
+												</label>
+											</form>
+											<form
+												method="POST"
+												action="?/removeUser"
+												use:pendingForm={`remove-user-${managedUser.id}`}
+											>
+												<input
+													type="hidden"
+													name="userId"
+													value={managedUser.id}
+												/>
+												<Button
+													type="submit"
+													variant="ghost"
+													class="text-destructive hover:text-destructive"
+													disabled={activeAction ===
+														`remove-user-${managedUser.id}`}
+												>
+													{#if activeAction === `remove-user-${managedUser.id}`}
+														<LoaderCircleIcon
+															class="size-4 animate-spin"
+														/>
+														Removing...
+													{:else}
+														Remove user
+													{/if}
+												</Button>
+											</form>
+										</div>
+									</Table.Cell>
+								</Table.Row>
+							{/each}
+						</Table.Body>
+					</Table.Root>
+				</div>
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Therapist assignments</Card.Title>
+				<Card.Description
+					>Patients visible to each therapist dashboard.</Card.Description
+				>
+			</Card.Header>
+			<Card.Content>
+				<div class="overflow-x-auto">
+					<Table.Root>
+						<Table.Header>
+							<Table.Row>
+								<Table.Head>Therapist</Table.Head>
+								<Table.Head>Patient</Table.Head>
+								<Table.Head>Assigned by</Table.Head>
+								<Table.Head class="text-right"
+									>Action</Table.Head
+								>
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{#if data.therapistAssignments.length === 0}
+								<Table.Row>
+									<Table.Cell
+										colspan={4}
+										class="text-muted-foreground py-8 text-center"
+									>
+										No therapist assignments yet.
+									</Table.Cell>
+								</Table.Row>
+							{:else}
+								{#each data.therapistAssignments as assignment (assignment.therapistId + assignment.patientId)}
+									<Table.Row>
+										<Table.Cell
+											>{assignment.therapistName}</Table.Cell
+										>
+										<Table.Cell
+											>{assignment.patientName}</Table.Cell
+										>
+										<Table.Cell
+											>{assignment.assignedBy}</Table.Cell
+										>
+										<Table.Cell class="text-right">
+											<form
+												method="POST"
+												action="?/removeTherapistAssignment"
+												use:pendingForm={`remove-therapist-${assignment.therapistId}-${assignment.patientId}`}
+											>
+												<input
+													type="hidden"
+													name="therapistId"
+													value={assignment.therapistId}
+												/>
+												<input
+													type="hidden"
+													name="patientId"
+													value={assignment.patientId}
+												/>
+												<Button
+													type="submit"
+													variant="ghost"
+													class="text-destructive hover:text-destructive"
+													disabled={activeAction ===
+														`remove-therapist-${assignment.therapistId}-${assignment.patientId}`}
+												>
+													{#if activeAction === `remove-therapist-${assignment.therapistId}-${assignment.patientId}`}
+														<LoaderCircleIcon
+															class="size-4 animate-spin"
+														/>
+													{:else}
+														Remove
+													{/if}
+												</Button>
+											</form>
+										</Table.Cell>
+									</Table.Row>
+								{/each}
+							{/if}
+						</Table.Body>
+					</Table.Root>
+				</div>
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Associate links</Card.Title>
+				<Card.Description
+					>Support network visibility for each patient.</Card.Description
+				>
+			</Card.Header>
+			<Card.Content>
+				<div class="overflow-x-auto">
+					<Table.Root>
+						<Table.Header>
+							<Table.Row>
+								<Table.Head>Associate</Table.Head>
+								<Table.Head>Patient</Table.Head>
+								<Table.Head>Relationship</Table.Head>
+								<Table.Head>Assigned by</Table.Head>
+								<Table.Head class="text-right"
+									>Action</Table.Head
+								>
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{#if data.associateAssignments.length === 0}
+								<Table.Row>
+									<Table.Cell
+										colspan={5}
+										class="text-muted-foreground py-8 text-center"
+									>
+										No associate links yet.
+									</Table.Cell>
+								</Table.Row>
+							{:else}
+								{#each data.associateAssignments as assignment (assignment.associateId + assignment.patientId)}
+									<Table.Row>
+										<Table.Cell
+											>{assignment.associateName}</Table.Cell
+										>
+										<Table.Cell
+											>{assignment.patientName}</Table.Cell
+										>
+										<Table.Cell>
+											<form
+												method="POST"
+												action="?/updateAssociateAssignment"
+												class="flex items-center gap-2"
+												use:pendingForm={`update-associate-${assignment.associateId}-${assignment.patientId}`}
+											>
+												<input
+													type="hidden"
+													name="associateId"
+													value={assignment.associateId}
+												/>
+												<input
+													type="hidden"
+													name="patientId"
+													value={assignment.patientId}
+												/>
+												<Input
+													name="relationshipLabel"
+													value={assignment.relationshipLabel}
+													class="h-8"
+													required
+												/>
+												<Button
+													type="submit"
+													variant="outline"
+													size="sm"
+													disabled={activeAction ===
+														`update-associate-${assignment.associateId}-${assignment.patientId}`}
+												>
+													{#if activeAction === `update-associate-${assignment.associateId}-${assignment.patientId}`}
+														<LoaderCircleIcon
+															class="size-4 animate-spin"
+														/>
+													{:else}
+														Save
+													{/if}
+												</Button>
+											</form>
+										</Table.Cell>
+										<Table.Cell
+											>{assignment.assignedBy}</Table.Cell
+										>
+										<Table.Cell class="text-right">
+											<form
+												method="POST"
+												action="?/removeAssociateAssignment"
+												use:pendingForm={`remove-associate-${assignment.associateId}-${assignment.patientId}`}
+											>
+												<input
+													type="hidden"
+													name="associateId"
+													value={assignment.associateId}
+												/>
+												<input
+													type="hidden"
+													name="patientId"
+													value={assignment.patientId}
+												/>
+												<Button
+													type="submit"
+													variant="ghost"
+													class="text-destructive hover:text-destructive"
+													disabled={activeAction ===
+														`remove-associate-${assignment.associateId}-${assignment.patientId}`}
+												>
+													{#if activeAction === `remove-associate-${assignment.associateId}-${assignment.patientId}`}
+														<LoaderCircleIcon
+															class="size-4 animate-spin"
+														/>
+													{:else}
+														Remove
+													{/if}
+												</Button>
+											</form>
+										</Table.Cell>
+									</Table.Row>
+								{/each}
+							{/if}
+						</Table.Body>
+					</Table.Root>
+				</div>
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Historical rehab files</Card.Title>
+				<Card.Description>Upload status and parser outcomes for each patient file.</Card.Description>
+			</Card.Header>
+			<Card.Content>
+				<div class="overflow-x-auto">
+					<Table.Root>
+						<Table.Header>
+							<Table.Row>
+								<Table.Head>Patient</Table.Head>
+								<Table.Head>File</Table.Head>
+								<Table.Head>Size</Table.Head>
+								<Table.Head>Status</Table.Head>
+								<Table.Head>Uploaded</Table.Head>
+								<Table.Head class="text-right">Action</Table.Head>
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{#if data.historyFiles.length === 0}
+								<Table.Row>
+									<Table.Cell colspan={6} class="text-muted-foreground py-6 text-center">
+										No rehab files uploaded yet.
+									</Table.Cell>
+								</Table.Row>
+							{:else}
+								{#each data.historyFiles as file (file.id)}
+									<Table.Row>
+										<Table.Cell>
+											<div class="font-medium">{file.patientName}</div>
+											<div class="text-muted-foreground text-xs">{file.patientEmail}</div>
+										</Table.Cell>
+										<Table.Cell>
+											<div class="font-medium">{file.fileName}</div>
+											<div class="text-muted-foreground text-xs">{file.mimeType}</div>
+										</Table.Cell>
+										<Table.Cell>{formatBytes(file.byteSize)}</Table.Cell>
+										<Table.Cell>
+											<div class="flex flex-col gap-1">
+												<Badge variant="outline">{file.parseStatus}</Badge>
+												{#if file.parseError}
+													<p class="text-destructive max-w-[280px] text-xs">{file.parseError}</p>
+												{/if}
+											</div>
+										</Table.Cell>
+										<Table.Cell>
+											<div>{formatDate(file.createdAt)}</div>
+											<div class="text-muted-foreground text-xs">
+												Parsed: {formatDate(file.parsedAt)}
+											</div>
+										</Table.Cell>
+										<Table.Cell class="text-right">
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												class="border-blue-200 text-blue-700 hover:bg-blue-50"
+												disabled={!data.aiFeatures.historyIngestEnabled || activeReprocessFileId === file.id}
+												onclick={() => reprocessHistoryFile(file.patientId, file.id)}
+											>
+												{#if activeReprocessFileId === file.id}
+													<LoaderCircleIcon class="size-4 animate-spin" />
+												{:else}
+													Reprocess
+												{/if}
+											</Button>
+										</Table.Cell>
+									</Table.Row>
+								{/each}
+							{/if}
+						</Table.Body>
+					</Table.Root>
+				</div>
+			</Card.Content>
+		</Card.Root>
+	</section>
+</div>

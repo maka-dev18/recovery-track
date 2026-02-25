@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1771510433090,
+      "tag": "0000_first_argent",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1771514455476,
+      "tag": "0001_role_relations",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1771936753856,
+      "tag": "0002_monitoring_dashboards",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1771974406228,
+      "tag": "0003_flippant_caretaker",
+      "breakpoints": true
+    }
+  ]
+}
