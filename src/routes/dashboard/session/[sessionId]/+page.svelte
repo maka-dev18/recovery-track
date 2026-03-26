@@ -394,6 +394,7 @@
 		peer = null;
 		pendingIceCandidates = [];
 		joined = false;
+		attachMediaTargets();
 
 		if (resetCursor) {
 			signalCursor = '';

@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, or } from 'drizzle-orm';
+import { and, eq, gt, or } from 'drizzle-orm';
 import { db } from '$lib/server/db';
 import { therapySession, therapySessionSignal } from '$lib/server/db/schema';
 
