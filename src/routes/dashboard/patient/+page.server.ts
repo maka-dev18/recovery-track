@@ -1,11 +1,15 @@
 import { fail } from '@sveltejs/kit';
 import { and, desc, eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
+import { listTherapistDirectConversationsForPatient, sendTherapistDirectMessage } from '$lib/server/conversations';
+import { buildPatientRecommendations, listCopingActivity, listPatientBadges, logCopingActivity, syncPatientBadges } from '$lib/server/engagement';
 import { requireRole } from '$lib/server/authz';
 import { aiConfig } from '$lib/server/config/ai';
 import { db } from '$lib/server/db';
 import { aiMessage, aiSession, patientCheckin, riskAlert, riskScore } from '$lib/server/db/schema';
+import { analyzeTextIntoPatientSignal, listRecentSignalsForPatient } from '$lib/server/patient-signals';
 import { createManualCriticalAlert, recalculatePatientRisk } from '$lib/server/risk';
+import { listUpcomingTherapySessionsForPatient } from '$lib/server/therapy-sessions';
 
 function parseIntegerInRange(value: FormDataEntryValue | null, min: number, max: number): number | null {
 	const parsed = Number.parseInt(value?.toString() ?? '', 10);
@@ -19,6 +23,7 @@ function parseIntegerInRange(value: FormDataEntryValue | null, min: number, max:
 
 export const load: PageServerLoad = async (event) => {
 	const patientUser = requireRole(event, 'patient');
+	await syncPatientBadges(patientUser.id);
 
 	const latestRisk = await db.query.riskScore.findFirst({
 		where: eq(riskScore.patientId, patientUser.id),
@@ -55,6 +60,13 @@ export const load: PageServerLoad = async (event) => {
 			})
 		: [];
 
+	const therapistConversations = await listTherapistDirectConversationsForPatient(patientUser.id);
+	const upcomingSessions = await listUpcomingTherapySessionsForPatient(patientUser.id, 8);
+	const rewardSummary = await listPatientBadges(patientUser.id);
+	const copingRecommendations = await buildPatientRecommendations(patientUser.id);
+	const copingActivity = await listCopingActivity(patientUser.id, 10);
+	const recentSignals = await listRecentSignalsForPatient(patientUser.id, 10);
+
 	return {
 		latestRisk,
 		recentCheckins,
@@ -80,6 +92,12 @@ export const load: PageServerLoad = async (event) => {
 			modality: message.modality,
 			createdAt: message.createdAt
 		})),
+		therapistConversations,
+		upcomingSessions,
+		rewardSummary,
+		copingRecommendations,
+		copingActivity,
+		recentSignals,
 		aiFeatures: {
 			chatEnabled: aiConfig.chatEnabled,
 			liveVoiceEnabled: aiConfig.liveVoiceEnabled
@@ -122,6 +140,7 @@ export const actions: Actions = {
 			checkinId,
 			triggeredByUserId: patientUser.id
 		});
+		await syncPatientBadges(patientUser.id);
 
 		return {
 			success: `Check-in submitted. Current risk tier: ${recalculation.tier}.`,
@@ -185,6 +204,7 @@ export const actions: Actions = {
 			checkinId,
 			triggeredByUserId: patientUser.id
 		});
+		await syncPatientBadges(patientUser.id);
 
 		return {
 			success: `Check-in updated. Current risk tier: ${recalculation.tier}.`,
@@ -221,10 +241,91 @@ export const actions: Actions = {
 			source: 'manual',
 			triggeredByUserId: patientUser.id
 		});
+		await syncPatientBadges(patientUser.id);
 
 		return {
 			success: `Check-in deleted. Current risk tier: ${recalculation.tier}.`,
 			mode: 'delete-checkin' as const
+		};
+	},
+	sendTherapistMessage: async (event) => {
+		const patientUser = requireRole(event, 'patient');
+		const formData = await event.request.formData();
+		const therapistId = formData.get('therapistId')?.toString() ?? '';
+		const content = formData.get('content')?.toString() ?? '';
+
+		if (!therapistId) {
+			return fail(400, {
+				message: 'Choose your assigned therapist before sending a message.',
+				mode: 'send-therapist-message' as const
+			});
+		}
+
+		try {
+			const result = await sendTherapistDirectMessage({
+				therapistId,
+				patientId: patientUser.id,
+				senderUserId: patientUser.id,
+				senderRole: 'patient',
+				content
+			});
+
+			await analyzeTextIntoPatientSignal({
+				patientId: patientUser.id,
+				text: content,
+				source: 'conversation',
+				originLabel: 'Patient therapist chat',
+				threadId: result.threadId,
+				messageId: result.messageId,
+				detectedByUserId: patientUser.id,
+				extraPayload: {
+					channel: 'therapist_direct',
+					therapistId
+				}
+			});
+
+			await recalculatePatientRisk({
+				patientId: patientUser.id,
+				source: 'chat',
+				triggeredByUserId: patientUser.id
+			});
+			await syncPatientBadges(patientUser.id);
+		} catch (error) {
+			return fail(400, {
+				message: error instanceof Error ? error.message : 'Could not send the therapist message.',
+				mode: 'send-therapist-message' as const
+			});
+		}
+
+		return {
+			success: 'Message sent to your therapist.',
+			mode: 'send-therapist-message' as const
+		};
+	},
+	logCopingActivity: async (event) => {
+		const patientUser = requireRole(event, 'patient');
+		const formData = await event.request.formData();
+		const toolKey = formData.get('toolKey')?.toString().trim() ?? '';
+		const title = formData.get('title')?.toString().trim() ?? '';
+		const note = formData.get('note')?.toString().trim() ?? '';
+
+		if (!toolKey || !title) {
+			return fail(400, {
+				message: 'Choose a coping recommendation before logging it.',
+				mode: 'log-coping-activity' as const
+			});
+		}
+
+		await logCopingActivity({
+			patientId: patientUser.id,
+			toolKey,
+			title,
+			note: note || null
+		});
+
+		return {
+			success: 'Coping activity logged and added to your recovery streak.',
+			mode: 'log-coping-activity' as const
 		};
 	}
 };

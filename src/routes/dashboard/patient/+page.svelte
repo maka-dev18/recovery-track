@@ -54,6 +54,93 @@
 			modality: string;
 			createdAt: Date;
 		}>;
+		therapistConversations: Array<{
+			threadId: string | null;
+			patientId: string;
+			patientName: string;
+			patientEmail: string;
+			therapistId: string;
+			therapistName: string;
+			therapistEmail: string;
+			lastMessageAt: Date | null;
+			lastMessagePreview: string | null;
+			messages: Array<{
+				id: string;
+				role: 'patient' | 'therapist';
+				senderName: string;
+				content: string;
+				createdAt: Date;
+			}>;
+		}>;
+		upcomingSessions: Array<{
+			id: string;
+			patientId: string;
+			patientName: string;
+			therapistId: string | null;
+			therapistName: string;
+			mode: string;
+			status: string;
+			requiresConfirmation: boolean;
+			summary: string;
+			sessionAt: Date | null;
+			automationReason: string | null;
+			meetingUrl: string | null;
+			meetingCode: string | null;
+			confirmedAt: Date | null;
+			createdAt: Date;
+			updatedAt: Date;
+			notes: {
+				presentation: string;
+				interventions: string[];
+				response: string;
+				homework: string[];
+				riskLevel: string | null;
+				nextSteps: string;
+			};
+		}>;
+		rewardSummary: {
+			totalPoints: number;
+			badges: Array<{
+				id: string;
+				badgeKey: string;
+				label: string;
+				description: string;
+				points: number;
+				awardedAt: Date;
+			}>;
+		};
+		copingRecommendations: Array<{
+			toolKey: string;
+			title: string;
+			description: string;
+			reason: string;
+			priority: 'gentle' | 'important' | 'urgent';
+		}>;
+		copingActivity: Array<{
+			id: string;
+			toolKey: string;
+			title: string;
+			note: string | null;
+			createdAt: Date;
+		}>;
+		recentSignals: Array<{
+			id: string;
+			patientId: string;
+			threadId: string | null;
+			messageId: string | null;
+			therapySessionId: string | null;
+			riskScoreId: string | null;
+			detectedByUserId: string | null;
+			source: string;
+			signalType: string;
+			status: string;
+			severity: number;
+			confidence: number;
+			summary: string;
+			payloadJson: string;
+			occurredAt: Date;
+			createdAt: Date;
+		}>;
 		aiFeatures: {
 			chatEnabled: boolean;
 			liveVoiceEnabled: boolean;
@@ -207,6 +294,10 @@
 		if (tier === 'high') return 'bg-orange-500 text-white';
 		if (tier === 'moderate') return 'bg-amber-400 text-amber-950';
 		return 'bg-blue-100 text-blue-700';
+	}
+
+	function modeLabel(value: string | null | undefined) {
+		return value ? value.replaceAll('_', ' ') : 'session';
 	}
 
 	function parseFactors(raw: string | null | undefined): Array<{ label: string; points: number }> {
@@ -1046,6 +1137,142 @@
 		</Card.Root>
 	</section>
 
+	<section class="grid gap-6 xl:grid-cols-3">
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Upcoming care calendar</Card.Title>
+				<Card.Description>Your scheduled follow-ups and live session links.</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-3">
+				{#if data.upcomingSessions.length === 0}
+					<p class="text-muted-foreground text-sm">
+						No follow-up sessions are scheduled yet.
+					</p>
+				{:else}
+					{#each data.upcomingSessions as session (session.id)}
+						<div class="space-y-2 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+							<div class="flex items-center justify-between gap-3">
+								<div>
+									<p class="font-medium">{modeLabel(session.mode)} with {session.therapistName}</p>
+									<p class="text-muted-foreground text-xs">{session.sessionAt ? formatDate(session.sessionAt) : 'Time pending'}</p>
+								</div>
+								<div class="flex flex-col items-end gap-1">
+									<Badge variant="outline">{session.status}</Badge>
+									{#if session.requiresConfirmation}
+										<Badge class="bg-amber-100 text-amber-900 hover:bg-amber-100">Awaiting therapist confirmation</Badge>
+									{/if}
+								</div>
+							</div>
+							{#if session.automationReason}
+								<p class="text-muted-foreground text-xs">{session.automationReason}</p>
+							{/if}
+							{#if session.meetingUrl}
+								<Button
+									type="button"
+									variant="outline"
+									class="w-full border-blue-200 text-blue-700 hover:bg-blue-50"
+									onclick={() => (window.location.href = session.meetingUrl!)}
+								>
+									Join {modeLabel(session.mode)}
+								</Button>
+							{/if}
+						</div>
+					{/each}
+				{/if}
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Coping recommendations</Card.Title>
+				<Card.Description>
+					Recommendations are adapted to your recent check-ins, history, and risk level.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				{#each data.copingRecommendations as recommendation (recommendation.toolKey)}
+					<form
+						method="POST"
+						action="?/logCopingActivity"
+						class="space-y-2 rounded-lg border border-blue-100 bg-blue-50/50 p-3"
+						use:pendingForm={`coping-${recommendation.toolKey}`}
+					>
+						<input type="hidden" name="toolKey" value={recommendation.toolKey} />
+						<input type="hidden" name="title" value={recommendation.title} />
+						<div class="flex items-start justify-between gap-3">
+							<div>
+								<p class="font-medium">{recommendation.title}</p>
+								<p class="text-muted-foreground text-xs">{recommendation.reason}</p>
+							</div>
+							<Badge class={recommendation.priority === 'urgent' ? 'bg-red-100 text-red-700 hover:bg-red-100' : recommendation.priority === 'important' ? 'bg-amber-100 text-amber-900 hover:bg-amber-100' : 'bg-blue-100 text-blue-700 hover:bg-blue-100'}>
+								{recommendation.priority}
+							</Badge>
+						</div>
+						<p class="text-sm">{recommendation.description}</p>
+						<Button
+							type="submit"
+							variant="outline"
+							class="border-blue-200 text-blue-700 hover:bg-blue-50"
+							disabled={activeAction === `coping-${recommendation.toolKey}`}
+						>
+							{#if activeAction === `coping-${recommendation.toolKey}`}
+								<LoaderCircleIcon class="size-4 animate-spin" />
+								Logging...
+							{:else}
+								Mark done
+							{/if}
+						</Button>
+					</form>
+				{/each}
+
+				{#if data.copingActivity.length > 0}
+					<div class="space-y-2 rounded-lg border border-blue-100 bg-white p-3">
+						<p class="text-sm font-medium">Recent coping wins</p>
+						{#each data.copingActivity.slice(0, 4) as entry (entry.id)}
+							<div class="flex items-center justify-between gap-3 text-xs">
+								<span>{entry.title}</span>
+								<span class="text-muted-foreground">{formatDate(entry.createdAt)}</span>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Badges and rewards</Card.Title>
+				<Card.Description>Keep your recovery streak visible and rewarding.</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				<div class="rounded-lg bg-blue-600 px-4 py-4 text-white">
+					<p class="text-sm text-blue-100">Recovery points</p>
+					<p class="text-3xl font-semibold">{data.rewardSummary.totalPoints}</p>
+				</div>
+				{#if data.rewardSummary.badges.length === 0}
+					<p class="text-muted-foreground text-sm">
+						Submit check-ins, use coping tools, and stay engaged to unlock your first badge.
+					</p>
+				{:else}
+					<div class="space-y-3">
+						{#each data.rewardSummary.badges.slice(0, 5) as badge (badge.id)}
+							<div class="rounded-lg border border-blue-100 bg-blue-50/50 p-3">
+								<div class="flex items-start justify-between gap-3">
+									<div>
+										<p class="font-medium">{badge.label}</p>
+										<p class="text-muted-foreground text-xs">{badge.description}</p>
+									</div>
+									<Badge class="bg-blue-100 text-blue-700 hover:bg-blue-100">+{badge.points}</Badge>
+								</div>
+								<p class="text-muted-foreground mt-2 text-xs">Awarded {formatDate(badge.awardedAt)}</p>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</Card.Content>
+		</Card.Root>
+	</section>
+
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -1196,6 +1423,123 @@
 						{/each}
 					{/if}
 				</div>
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	<section>
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Message your therapist</Card.Title>
+				<Card.Description>
+					Send non-urgent updates to your assigned therapist directly from the dashboard.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				{#if data.therapistConversations.length === 0}
+					<p class="text-muted-foreground text-sm">
+						No therapist assignment is available for direct messaging yet.
+					</p>
+				{:else}
+					{#each data.therapistConversations as conversation (conversation.therapistId)}
+						<div class="space-y-3 rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+							<div class="flex items-start justify-between gap-3">
+								<div>
+									<p class="font-medium">{conversation.therapistName}</p>
+									<p class="text-muted-foreground text-xs">{conversation.therapistEmail}</p>
+								</div>
+								{#if conversation.lastMessageAt}
+									<Badge variant="outline">{formatDate(conversation.lastMessageAt)}</Badge>
+								{:else}
+									<Badge variant="secondary">No messages yet</Badge>
+								{/if}
+							</div>
+							<div class="max-h-56 space-y-2 overflow-y-auto rounded-md border bg-white p-3">
+								{#if conversation.messages.length === 0}
+									<p class="text-muted-foreground text-sm">
+										Send the first update when you need asynchronous therapist follow-up.
+									</p>
+								{:else}
+									{#each conversation.messages as message (message.id)}
+										<div
+											class={`rounded-md px-3 py-2 text-sm ${message.role === 'patient' ? 'ml-auto max-w-[90%] bg-blue-600 text-white' : 'max-w-[90%] bg-slate-100 text-slate-900'}`}
+										>
+											<p class="text-xs opacity-70">
+												{message.senderName} · {formatDate(message.createdAt)}
+											</p>
+											<p class="whitespace-pre-wrap">{message.content}</p>
+										</div>
+									{/each}
+								{/if}
+							</div>
+							<form
+								method="POST"
+								action="?/sendTherapistMessage"
+								class="space-y-3"
+								use:pendingForm={`send-therapist-message-${conversation.therapistId}`}
+							>
+								<input type="hidden" name="therapistId" value={conversation.therapistId} />
+								<div class="grid gap-2">
+									<Label for={`therapist-message-${conversation.therapistId}`}>Message</Label>
+									<Textarea
+										id={`therapist-message-${conversation.therapistId}`}
+										name="content"
+										required
+										placeholder="Share an update, question, or support need."
+									/>
+								</div>
+								<Button
+									type="submit"
+									class="bg-blue-600 text-white hover:bg-blue-700"
+									disabled={activeAction === `send-therapist-message-${conversation.therapistId}`}
+								>
+									{#if activeAction === `send-therapist-message-${conversation.therapistId}`}
+										<LoaderCircleIcon class="size-4 animate-spin" />
+										Sending...
+									{:else}
+										Send to therapist
+									{/if}
+								</Button>
+							</form>
+						</div>
+					{/each}
+				{/if}
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	<section>
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Clinical signal log</Card.Title>
+				<Card.Description>
+					The care system keeps structured notes about important recovery signals across chats, sessions, and observations.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-3">
+				{#if data.recentSignals.length === 0}
+					<p class="text-muted-foreground text-sm">
+						No structured signals have been captured yet.
+					</p>
+				{:else}
+					{#each data.recentSignals as signal (signal.id)}
+						<div class="rounded-lg border border-blue-100 bg-blue-50/50 p-3">
+							<div class="flex items-center justify-between gap-3">
+								<div class="flex items-center gap-2">
+									<Badge class={tierBadgeClass(signal.severity >= 75 ? 'high' : signal.severity >= 45 ? 'moderate' : 'low')}>
+										{signal.signalType.replaceAll('_', ' ')}
+									</Badge>
+									<Badge variant="outline">{signal.source.replaceAll('_', ' ')}</Badge>
+								</div>
+								<span class="text-muted-foreground text-xs">{formatDate(signal.occurredAt)}</span>
+							</div>
+							<p class="mt-2 text-sm">{signal.summary}</p>
+							<p class="text-muted-foreground mt-1 text-xs">
+								Severity {signal.severity} · Confidence {signal.confidence}
+							</p>
+						</div>
+					{/each}
+				{/if}
 			</Card.Content>
 		</Card.Root>
 	</section>

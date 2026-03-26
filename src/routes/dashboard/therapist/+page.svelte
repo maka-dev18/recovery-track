@@ -3,9 +3,12 @@
 	import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
+	import TrendChart from '$lib/components/recovery/trend-chart.svelte';
 	import * as Card from '$lib/components/ui/card';
 	import { Input } from '$lib/components/ui/input';
+	import { Label } from '$lib/components/ui/label';
 	import * as Table from '$lib/components/ui/table';
+	import { Textarea } from '$lib/components/ui/textarea';
 
 	type TherapistPageData = {
 		caseload: Array<{
@@ -50,6 +53,130 @@
 			note: string;
 			createdAt: Date;
 		}>;
+		chatConversations: Array<{
+			threadId: string | null;
+			patientId: string;
+			patientName: string;
+			patientEmail: string;
+			therapistId: string;
+			therapistName: string;
+			therapistEmail: string;
+			lastMessageAt: Date | null;
+			lastMessagePreview: string | null;
+			messages: Array<{
+				id: string;
+				role: 'patient' | 'therapist';
+				senderName: string;
+				content: string;
+				createdAt: Date;
+			}>;
+		}>;
+		therapySessions: Array<{
+			id: string;
+			patientId: string;
+			patientName: string;
+			mode: string;
+			status: string;
+			requiresConfirmation: boolean;
+			summary: string;
+			sessionAt: Date | null;
+			automationReason: string | null;
+			meetingUrl: string | null;
+			meetingCode: string | null;
+			confirmedAt: Date | null;
+			createdAt: Date;
+			updatedAt: Date;
+			notes: {
+				presentation: string;
+				interventions: string[];
+				response: string;
+				homework: string[];
+				riskLevel: string | null;
+				nextSteps: string;
+			};
+		}>;
+		upcomingSessions: Array<{
+			id: string;
+			patientId: string;
+			patientName: string;
+			therapistId: string | null;
+			therapistName: string;
+			mode: string;
+			status: string;
+			requiresConfirmation: boolean;
+			summary: string;
+			sessionAt: Date | null;
+			automationReason: string | null;
+			meetingUrl: string | null;
+			meetingCode: string | null;
+			confirmedAt: Date | null;
+			createdAt: Date;
+			updatedAt: Date;
+			notes: {
+				presentation: string;
+				interventions: string[];
+				response: string;
+				homework: string[];
+				riskLevel: string | null;
+				nextSteps: string;
+			};
+		}>;
+		associateConversations: Array<{
+			threadId: string | null;
+			patientId: string;
+			patientName: string;
+			patientEmail: string;
+			therapistId: string;
+			therapistName: string;
+			therapistEmail: string;
+			associateId: string;
+			associateName: string;
+			associateEmail: string;
+			lastMessageAt: Date | null;
+			lastMessagePreview: string | null;
+			messages: Array<{
+				id: string;
+				role: 'therapist' | 'associate';
+				senderName: string;
+				content: string;
+				createdAt: Date;
+			}>;
+		}>;
+		patientReports: Array<{
+			patientId: string;
+			patientName: string;
+			patientEmail: string;
+			riskTier: string | null;
+			riskScore: number | null;
+			riskTrend: 'rising' | 'falling' | 'steady';
+			riskSeries: Array<{ label: string; value: number }>;
+			moodSeries: Array<{ label: string; value: number }>;
+			cravingSeries: Array<{ label: string; value: number }>;
+			stressSeries: Array<{ label: string; value: number }>;
+			observationSeries: Array<{ label: string; value: number }>;
+			sessionCompletionRate: number;
+			recentSignalCount: number;
+			warningPatterns: string[];
+			narrative: string;
+			recoveryStage: string | null;
+			goals: string[];
+		}>;
+		recentSignals: Array<{
+			id: string;
+			patientId: string;
+			patientName: string;
+			source: string;
+			signalType: string;
+			status: string;
+			severity: number;
+			confidence: number;
+			summary: string;
+			occurredAt: Date;
+			detectedBy: string;
+		}>;
+		therapySessionModeValues: string[];
+		therapySessionStatusValues: string[];
+		therapySessionRiskLevelValues: string[];
 	};
 
 	type TherapistPageForm = {
@@ -60,6 +187,7 @@
 
 	let { data, form }: { data: TherapistPageData; form: TherapistPageForm } = $props();
 	let activeAction = $state<string | null>(null);
+	let selectedReportPatientId = $state<string | null>(null);
 
 	function pendingForm(node: HTMLFormElement, actionName: string) {
 		return enhance(node, () => {
@@ -91,6 +219,40 @@
 		if (tier === 'moderate') return 'bg-amber-400 text-amber-950';
 		return 'bg-blue-100 text-blue-700';
 	}
+
+	function formatDateTimeInput(value: Date | string | null) {
+		if (!value) return '';
+		const date = typeof value === 'string' ? new Date(value) : value;
+		const pad = (input: number) => `${input}`.padStart(2, '0');
+
+		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+	}
+
+	function formatList(values: string[]) {
+		return values.join(', ');
+	}
+
+	function modeLabel(value: string | null | undefined) {
+		return value ? value.replaceAll('_', ' ') : 'session';
+	}
+
+	function formatPercent(value: number) {
+		return `${Math.round(value * 100)}%`;
+	}
+
+	function selectedReport() {
+		if (!selectedReportPatientId) {
+			return data.patientReports[0] ?? null;
+		}
+
+		return data.patientReports.find((report) => report.patientId === selectedReportPatientId) ?? null;
+	}
+
+	$effect(() => {
+		if (!selectedReportPatientId && data.patientReports.length > 0) {
+			selectedReportPatientId = data.patientReports[0].patientId;
+		}
+	});
 </script>
 
 <div class="space-y-6">
@@ -122,6 +284,254 @@
 				<Card.Description>Recent activity</Card.Description>
 				<Card.Title class="text-3xl">{data.recentCheckins.length + data.recentObservations.length}</Card.Title>
 			</Card.Header>
+		</Card.Root>
+	</section>
+
+	<section>
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Therapist reports</Card.Title>
+				<Card.Description>
+					Summary graphs and relapse-pattern context across each patient’s post-rehab recovery data.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-6">
+				{#if data.patientReports.length === 0}
+					<p class="text-muted-foreground text-sm">
+						No patient reports are available until your caseload has check-ins, signals, or session history.
+					</p>
+				{:else}
+					<div class="grid gap-2 md:max-w-sm">
+						<Label for="report-patient">Patient report</Label>
+						<select
+							id="report-patient"
+							bind:value={selectedReportPatientId}
+							class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+						>
+							{#each data.patientReports as report (report.patientId)}
+								<option value={report.patientId}>{report.patientName}</option>
+							{/each}
+						</select>
+					</div>
+
+					{#if selectedReport()}
+						<div class="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+							<div class="space-y-4">
+								<div class="grid gap-4 md:grid-cols-4">
+									<div class="rounded-lg border border-blue-100 bg-blue-50/70 p-4">
+										<p class="text-muted-foreground text-xs">Risk tier</p>
+										<p class="mt-1 font-semibold">{selectedReport()!.riskTier ?? 'No data'}</p>
+									</div>
+									<div class="rounded-lg border border-blue-100 bg-blue-50/70 p-4">
+										<p class="text-muted-foreground text-xs">Risk score</p>
+										<p class="mt-1 font-semibold">{selectedReport()!.riskScore ?? '—'}</p>
+									</div>
+									<div class="rounded-lg border border-blue-100 bg-blue-50/70 p-4">
+										<p class="text-muted-foreground text-xs">Trend</p>
+										<p class="mt-1 font-semibold">{selectedReport()!.riskTrend}</p>
+									</div>
+									<div class="rounded-lg border border-blue-100 bg-blue-50/70 p-4">
+										<p class="text-muted-foreground text-xs">Session completion</p>
+										<p class="mt-1 font-semibold">{formatPercent(selectedReport()!.sessionCompletionRate)}</p>
+									</div>
+								</div>
+
+								<div class="grid gap-4 md:grid-cols-2">
+									<div class="rounded-lg border border-blue-100 bg-white p-4">
+										<p class="mb-3 text-sm font-medium">Risk trend</p>
+										<TrendChart data={selectedReport()!.riskSeries} />
+									</div>
+									<div class="rounded-lg border border-blue-100 bg-white p-4">
+										<p class="mb-3 text-sm font-medium">Craving trend</p>
+										<TrendChart
+											data={selectedReport()!.cravingSeries}
+											stroke="#ea580c"
+											fill="rgba(234, 88, 12, 0.12)"
+										/>
+									</div>
+									<div class="rounded-lg border border-blue-100 bg-white p-4">
+										<p class="mb-3 text-sm font-medium">Stress trend</p>
+										<TrendChart
+											data={selectedReport()!.stressSeries}
+											stroke="#dc2626"
+											fill="rgba(220, 38, 38, 0.12)"
+										/>
+									</div>
+									<div class="rounded-lg border border-blue-100 bg-white p-4">
+										<p class="mb-3 text-sm font-medium">Observation severity</p>
+										<TrendChart
+											data={selectedReport()!.observationSeries}
+											stroke="#0f766e"
+											fill="rgba(15, 118, 110, 0.12)"
+										/>
+									</div>
+								</div>
+							</div>
+
+							<div class="space-y-4">
+								<div class="rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+									<p class="text-sm font-medium">Generated narrative</p>
+									<p class="mt-2 text-sm leading-6">{selectedReport()!.narrative}</p>
+								</div>
+
+								<div class="rounded-lg border border-blue-100 bg-white p-4">
+									<p class="text-sm font-medium">Warning patterns</p>
+									<div class="mt-3 space-y-2">
+										{#each selectedReport()!.warningPatterns as pattern (pattern)}
+											<div class="rounded-md bg-blue-50 px-3 py-2 text-sm">{pattern}</div>
+										{/each}
+									</div>
+								</div>
+
+								<div class="rounded-lg border border-blue-100 bg-white p-4">
+									<p class="text-sm font-medium">Recovery stage and goals</p>
+									<p class="text-muted-foreground mt-2 text-xs">
+										Stage: {selectedReport()!.recoveryStage ?? 'active recovery'}
+									</p>
+									<div class="mt-3 flex flex-wrap gap-2">
+										{#if selectedReport()!.goals.length === 0}
+											<Badge variant="secondary">No explicit goals yet</Badge>
+										{:else}
+											{#each selectedReport()!.goals as goal (goal)}
+												<Badge variant="outline">{goal}</Badge>
+											{/each}
+										{/if}
+									</div>
+								</div>
+							</div>
+						</div>
+					{/if}
+				{/if}
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	<section class="grid gap-6 xl:grid-cols-2">
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Calendar and follow-ups</Card.Title>
+				<Card.Description>
+					High-risk sessions are auto-scheduled, while moderate-risk video follow-ups wait for your confirmation.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				{#if data.upcomingSessions.length === 0}
+					<p class="text-muted-foreground text-sm">No upcoming sessions are on your calendar.</p>
+				{:else}
+					{#each data.upcomingSessions as session (session.id)}
+						<div class="space-y-3 rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+							<div class="flex items-start justify-between gap-3">
+								<div>
+									<p class="font-medium">{session.patientName}</p>
+									<p class="text-muted-foreground text-xs">
+										{session.sessionAt ? formatDate(session.sessionAt) : 'Time pending'} · {modeLabel(session.mode)}
+									</p>
+								</div>
+								<div class="flex items-center gap-2">
+									<Badge variant="outline">{session.status}</Badge>
+									{#if session.requiresConfirmation}
+										<Badge class="bg-amber-100 text-amber-900 hover:bg-amber-100">Needs confirmation</Badge>
+									{/if}
+								</div>
+							</div>
+							<p class="text-sm">{session.summary}</p>
+							{#if session.automationReason}
+								<p class="text-muted-foreground text-xs">{session.automationReason}</p>
+							{/if}
+							<div class="grid gap-2 md:grid-cols-[1fr_auto_auto]">
+								<form
+									method="POST"
+									action="?/rescheduleSession"
+									class="contents"
+									use:pendingForm={`reschedule-session-${session.id}`}
+								>
+									<input type="hidden" name="sessionId" value={session.id} />
+									<Input
+										name="sessionAt"
+										type="datetime-local"
+										value={formatDateTimeInput(session.sessionAt)}
+									/>
+									<Button
+										type="submit"
+										variant="outline"
+										class="border-blue-200 text-blue-700 hover:bg-blue-50"
+										disabled={activeAction === `reschedule-session-${session.id}`}
+									>
+										{#if activeAction === `reschedule-session-${session.id}`}
+											<LoaderCircleIcon class="size-4 animate-spin" />
+										{:else}
+											Reschedule
+										{/if}
+									</Button>
+								</form>
+								{#if session.requiresConfirmation}
+									<form
+										method="POST"
+										action="?/confirmSuggestedSession"
+										use:pendingForm={`confirm-suggested-session-${session.id}`}
+									>
+										<input type="hidden" name="sessionId" value={session.id} />
+										<input type="hidden" name="sessionAt" value={formatDateTimeInput(session.sessionAt)} />
+										<Button
+											type="submit"
+											class="bg-blue-600 text-white hover:bg-blue-700"
+											disabled={activeAction === `confirm-suggested-session-${session.id}`}
+										>
+											{#if activeAction === `confirm-suggested-session-${session.id}`}
+												<LoaderCircleIcon class="size-4 animate-spin" />
+											{:else}
+												Confirm
+											{/if}
+										</Button>
+									</form>
+								{:else if session.meetingUrl}
+									{#if session.mode === 'video' || session.mode === 'phone'}
+										<Button
+											type="button"
+											class="bg-blue-600 text-white hover:bg-blue-700"
+											onclick={() => (window.location.href = session.meetingUrl!)}
+										>
+											Join call
+										</Button>
+									{/if}
+								{/if}
+							</div>
+						</div>
+					{/each}
+				{/if}
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Clinical signal feed</Card.Title>
+				<Card.Description>
+					Analyzed signals from patient AI chat, therapist messaging, associate updates, and therapy sessions.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-3">
+				{#if data.recentSignals.length === 0}
+					<p class="text-muted-foreground text-sm">No recent clinical signals were captured.</p>
+				{:else}
+					{#each data.recentSignals.slice(0, 8) as signal (signal.id)}
+						<div class="rounded-lg border border-blue-100 bg-blue-50/50 p-3">
+							<div class="flex items-center justify-between gap-3">
+								<div class="flex items-center gap-2">
+									<Badge class={tierBadgeClass(signal.severity >= 75 ? 'high' : signal.severity >= 45 ? 'moderate' : 'low')}>
+										{signal.signalType.replaceAll('_', ' ')}
+									</Badge>
+									<Badge variant="outline">{signal.source.replaceAll('_', ' ')}</Badge>
+								</div>
+								<span class="text-muted-foreground text-xs">{formatDate(signal.occurredAt)}</span>
+							</div>
+							<p class="mt-2 text-sm">{signal.summary}</p>
+							<p class="text-muted-foreground mt-1 text-xs">
+								{signal.patientName} · Severity {signal.severity} · Confidence {signal.confidence} · Detected by {signal.detectedBy}
+							</p>
+						</div>
+					{/each}
+				{/if}
+			</Card.Content>
 		</Card.Root>
 	</section>
 
@@ -242,6 +652,489 @@
 							</form>
 						</div>
 						</div>
+					{/each}
+				{/if}
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	<section class="grid gap-6 xl:grid-cols-2">
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Therapist-patient messaging</Card.Title>
+				<Card.Description>
+					Asynchronous care-team communication scoped to your assigned caseload.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				{#if data.chatConversations.length === 0}
+					<p class="text-muted-foreground text-sm">
+						No assigned patients are available for direct messaging yet.
+					</p>
+				{:else}
+					{#each data.chatConversations as conversation (conversation.patientId)}
+						<div class="space-y-3 rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+							<div class="flex items-start justify-between gap-3">
+								<div>
+									<p class="font-medium">{conversation.patientName}</p>
+									<p class="text-muted-foreground text-xs">{conversation.patientEmail}</p>
+								</div>
+								{#if conversation.lastMessageAt}
+									<Badge variant="outline">{formatDate(conversation.lastMessageAt)}</Badge>
+								{:else}
+									<Badge variant="secondary">No messages yet</Badge>
+								{/if}
+							</div>
+
+							<div class="max-h-56 space-y-2 overflow-y-auto rounded-md border bg-white p-3">
+								{#if conversation.messages.length === 0}
+									<p class="text-muted-foreground text-sm">
+										Start the first outreach message for this patient.
+									</p>
+								{:else}
+									{#each conversation.messages as message (message.id)}
+										<div
+											class={`rounded-md px-3 py-2 text-sm ${message.role === 'therapist' ? 'ml-auto max-w-[90%] bg-blue-600 text-white' : 'max-w-[90%] bg-slate-100 text-slate-900'}`}
+										>
+											<p class="text-xs opacity-70">
+												{message.senderName} · {formatDate(message.createdAt)}
+											</p>
+											<p class="whitespace-pre-wrap">{message.content}</p>
+										</div>
+									{/each}
+								{/if}
+							</div>
+
+							<form
+								method="POST"
+								action="?/sendMessage"
+								class="space-y-3"
+								use:pendingForm={`send-message-${conversation.patientId}`}
+							>
+								<input type="hidden" name="patientId" value={conversation.patientId} />
+								<div class="grid gap-2">
+									<Label for={`message-${conversation.patientId}`}>Reply</Label>
+									<Textarea
+										id={`message-${conversation.patientId}`}
+										name="content"
+										required
+										placeholder="Share a quick follow-up or care instruction."
+									/>
+								</div>
+								<Button
+									type="submit"
+									class="bg-blue-600 text-white hover:bg-blue-700"
+									disabled={activeAction === `send-message-${conversation.patientId}`}
+								>
+									{#if activeAction === `send-message-${conversation.patientId}`}
+										<LoaderCircleIcon class="size-4 animate-spin" />
+										Sending...
+									{:else}
+										Send message
+									{/if}
+								</Button>
+							</form>
+						</div>
+					{/each}
+				{/if}
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Create session note</Card.Title>
+				<Card.Description>
+					Capture a concise structured note after each patient session.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content>
+				<form
+					method="POST"
+					action="?/saveSessionNote"
+					class="grid gap-4"
+					use:pendingForm={'save-session-note-new'}
+				>
+					<div class="grid gap-4 md:grid-cols-2">
+						<div class="grid gap-2">
+							<Label for="session-patient-id">Patient</Label>
+							<select
+								id="session-patient-id"
+								name="patientId"
+								required
+								class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+							>
+								<option value="">Select patient</option>
+								{#each data.caseload as patient (patient.patientId)}
+									<option value={patient.patientId}>{patient.patientName}</option>
+								{/each}
+							</select>
+						</div>
+						<div class="grid gap-2">
+							<Label for="session-at">Session time</Label>
+							<Input id="session-at" name="sessionAt" type="datetime-local" />
+						</div>
+					</div>
+					<div class="grid gap-4 md:grid-cols-2">
+						<div class="grid gap-2">
+							<Label for="session-mode">Mode</Label>
+							<select
+								id="session-mode"
+								name="sessionMode"
+								required
+								class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+							>
+								{#each data.therapySessionModeValues as mode (mode)}
+									<option value={mode}>{mode.replaceAll('_', ' ')}</option>
+								{/each}
+							</select>
+						</div>
+						<div class="grid gap-2">
+							<Label for="session-status">Status</Label>
+							<select
+								id="session-status"
+								name="sessionStatus"
+								required
+								class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+							>
+								{#each data.therapySessionStatusValues as status (status)}
+									<option value={status} selected={status === 'completed'}>
+										{status.replaceAll('_', ' ')}
+									</option>
+								{/each}
+							</select>
+						</div>
+					</div>
+					<div class="grid gap-2">
+						<Label for="session-summary">Summary</Label>
+						<Textarea
+							id="session-summary"
+							name="summary"
+							required
+							placeholder="High-level summary of what happened in the session."
+						/>
+					</div>
+					<div class="grid gap-2">
+						<Label for="presentation">Presentation</Label>
+						<Textarea
+							id="presentation"
+							name="presentation"
+							placeholder="Symptoms, mood, attendance, and notable presentation."
+						/>
+					</div>
+					<div class="grid gap-4 md:grid-cols-2">
+						<div class="grid gap-2">
+							<Label for="interventions">Interventions</Label>
+							<Input
+								id="interventions"
+								name="interventions"
+								placeholder="CBT reframing, relapse planning, grounding"
+							/>
+						</div>
+						<div class="grid gap-2">
+							<Label for="homework">Homework</Label>
+							<Input
+								id="homework"
+								name="homework"
+								placeholder="Daily check-in, support meeting, journal"
+							/>
+						</div>
+					</div>
+					<div class="grid gap-2">
+						<Label for="response">Patient response</Label>
+						<Textarea
+							id="response"
+							name="response"
+							placeholder="How the patient engaged and responded to interventions."
+						/>
+					</div>
+					<div class="grid gap-4 md:grid-cols-[1fr_2fr]">
+						<div class="grid gap-2">
+							<Label for="risk-level">Risk level</Label>
+							<select
+								id="risk-level"
+								name="riskLevel"
+								class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+							>
+								<option value="">Not set</option>
+								{#each data.therapySessionRiskLevelValues as riskLevel (riskLevel)}
+									<option value={riskLevel}>{riskLevel}</option>
+								{/each}
+							</select>
+						</div>
+						<div class="grid gap-2">
+							<Label for="next-steps">Next steps</Label>
+							<Textarea
+								id="next-steps"
+								name="nextSteps"
+								placeholder="Follow-up plan, referrals, or outreach steps."
+							/>
+						</div>
+					</div>
+					<Button
+						type="submit"
+						class="bg-blue-600 text-white hover:bg-blue-700"
+						disabled={activeAction === 'save-session-note-new'}
+					>
+						{#if activeAction === 'save-session-note-new'}
+							<LoaderCircleIcon class="size-4 animate-spin" />
+							Saving...
+						{:else}
+							Save session note
+						{/if}
+					</Button>
+				</form>
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	<section>
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Therapist-associate messaging</Card.Title>
+				<Card.Description>
+					Coordinate directly with associates about behavior, daily habits, diet, attendance, and warning signs.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				{#if data.associateConversations.length === 0}
+					<p class="text-muted-foreground text-sm">
+						No associate threads are available for your current caseload.
+					</p>
+				{:else}
+					{#each data.associateConversations as conversation (conversation.patientId + conversation.associateId)}
+						<div class="space-y-3 rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+							<div class="flex items-start justify-between gap-3">
+								<div>
+									<p class="font-medium">{conversation.patientName}</p>
+									<p class="text-muted-foreground text-xs">
+										Associate: {conversation.associateName} · {conversation.associateEmail}
+									</p>
+								</div>
+								{#if conversation.lastMessageAt}
+									<Badge variant="outline">{formatDate(conversation.lastMessageAt)}</Badge>
+								{:else}
+									<Badge variant="secondary">No messages yet</Badge>
+								{/if}
+							</div>
+
+							<div class="max-h-56 space-y-2 overflow-y-auto rounded-md border bg-white p-3">
+								{#if conversation.messages.length === 0}
+									<p class="text-muted-foreground text-sm">
+										Start the first coordination note for this patient.
+									</p>
+								{:else}
+									{#each conversation.messages as message (message.id)}
+										<div
+											class={`rounded-md px-3 py-2 text-sm ${message.role === 'therapist' ? 'ml-auto max-w-[90%] bg-blue-600 text-white' : 'max-w-[90%] bg-slate-100 text-slate-900'}`}
+										>
+											<p class="text-xs opacity-70">
+												{message.senderName} · {formatDate(message.createdAt)}
+											</p>
+											<p class="whitespace-pre-wrap">{message.content}</p>
+										</div>
+									{/each}
+								{/if}
+							</div>
+
+							<form
+								method="POST"
+								action="?/sendAssociateMessage"
+								class="space-y-3"
+								use:pendingForm={`send-associate-message-${conversation.patientId}-${conversation.associateId}`}
+							>
+								<input type="hidden" name="patientId" value={conversation.patientId} />
+								<input type="hidden" name="associateId" value={conversation.associateId} />
+								<div class="grid gap-2">
+									<Label for={`associate-message-${conversation.patientId}-${conversation.associateId}`}>
+										Message
+									</Label>
+									<Textarea
+										id={`associate-message-${conversation.patientId}-${conversation.associateId}`}
+										name="content"
+										required
+										placeholder="Ask for a quick update on sleep, diet, mood, routine, attendance, or relapse warning signs."
+									/>
+								</div>
+								<Button
+									type="submit"
+									class="bg-blue-600 text-white hover:bg-blue-700"
+									disabled={activeAction === `send-associate-message-${conversation.patientId}-${conversation.associateId}`}
+								>
+									{#if activeAction === `send-associate-message-${conversation.patientId}-${conversation.associateId}`}
+										<LoaderCircleIcon class="size-4 animate-spin" />
+										Sending...
+									{:else}
+										Send to associate
+									{/if}
+								</Button>
+							</form>
+						</div>
+					{/each}
+				{/if}
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	<section>
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Recent therapy notes</Card.Title>
+				<Card.Description>
+					Update recent session documentation without leaving the dashboard.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				{#if data.therapySessions.length === 0}
+					<p class="text-muted-foreground text-sm">
+						No therapy session notes recorded yet.
+					</p>
+				{:else}
+					{#each data.therapySessions as session (session.id)}
+						<form
+							method="POST"
+							action="?/saveSessionNote"
+							class="space-y-4 rounded-lg border border-blue-100 bg-blue-50/40 p-4"
+							use:pendingForm={`save-session-note-${session.id}`}
+						>
+							<input type="hidden" name="sessionId" value={session.id} />
+							<input type="hidden" name="patientId" value={session.patientId} />
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<div>
+									<p class="font-medium">{session.patientName}</p>
+									<p class="text-muted-foreground text-xs">
+										Updated {formatDate(session.updatedAt)}
+									</p>
+								</div>
+								<div class="flex items-center gap-2">
+									<Badge variant="outline">{session.status.replaceAll('_', ' ')}</Badge>
+									<Badge variant="outline">{session.mode.replaceAll('_', ' ')}</Badge>
+									{#if session.notes.riskLevel}
+										<Badge class={tierBadgeClass(session.notes.riskLevel)}>
+											{session.notes.riskLevel}
+										</Badge>
+									{/if}
+								</div>
+							</div>
+							<div class="grid gap-4 md:grid-cols-3">
+								<div class="grid gap-2">
+									<Label for={`session-at-${session.id}`}>Session time</Label>
+									<Input
+										id={`session-at-${session.id}`}
+										name="sessionAt"
+										type="datetime-local"
+										value={formatDateTimeInput(session.sessionAt)}
+									/>
+								</div>
+								<div class="grid gap-2">
+									<Label for={`session-mode-${session.id}`}>Mode</Label>
+									<select
+										id={`session-mode-${session.id}`}
+										name="sessionMode"
+										class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+									>
+										{#each data.therapySessionModeValues as mode (mode)}
+											<option value={mode} selected={mode === session.mode}>
+												{mode.replaceAll('_', ' ')}
+											</option>
+										{/each}
+									</select>
+								</div>
+								<div class="grid gap-2">
+									<Label for={`session-status-${session.id}`}>Status</Label>
+									<select
+										id={`session-status-${session.id}`}
+										name="sessionStatus"
+										class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+									>
+										{#each data.therapySessionStatusValues as status (status)}
+											<option value={status} selected={status === session.status}>
+												{status.replaceAll('_', ' ')}
+											</option>
+										{/each}
+									</select>
+								</div>
+							</div>
+							<div class="grid gap-2">
+								<Label for={`summary-${session.id}`}>Summary</Label>
+								<Textarea
+									id={`summary-${session.id}`}
+									name="summary"
+									required
+									value={session.summary}
+								/>
+							</div>
+							<div class="grid gap-2">
+								<Label for={`presentation-${session.id}`}>Presentation</Label>
+								<Textarea
+									id={`presentation-${session.id}`}
+									name="presentation"
+									value={session.notes.presentation}
+								/>
+							</div>
+							<div class="grid gap-4 md:grid-cols-2">
+								<div class="grid gap-2">
+									<Label for={`interventions-${session.id}`}>Interventions</Label>
+									<Input
+										id={`interventions-${session.id}`}
+										name="interventions"
+										value={formatList(session.notes.interventions)}
+									/>
+								</div>
+								<div class="grid gap-2">
+									<Label for={`homework-${session.id}`}>Homework</Label>
+									<Input
+										id={`homework-${session.id}`}
+										name="homework"
+										value={formatList(session.notes.homework)}
+									/>
+								</div>
+							</div>
+							<div class="grid gap-2">
+								<Label for={`response-${session.id}`}>Patient response</Label>
+								<Textarea
+									id={`response-${session.id}`}
+									name="response"
+									value={session.notes.response}
+								/>
+							</div>
+							<div class="grid gap-4 md:grid-cols-[1fr_2fr]">
+								<div class="grid gap-2">
+									<Label for={`risk-level-${session.id}`}>Risk level</Label>
+									<select
+										id={`risk-level-${session.id}`}
+										name="riskLevel"
+										class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
+									>
+										<option value="">Not set</option>
+										{#each data.therapySessionRiskLevelValues as riskLevel (riskLevel)}
+											<option value={riskLevel} selected={riskLevel === session.notes.riskLevel}>
+												{riskLevel}
+											</option>
+										{/each}
+									</select>
+								</div>
+								<div class="grid gap-2">
+									<Label for={`next-steps-${session.id}`}>Next steps</Label>
+									<Textarea
+										id={`next-steps-${session.id}`}
+										name="nextSteps"
+										value={session.notes.nextSteps}
+									/>
+								</div>
+							</div>
+							<Button
+								type="submit"
+								class="bg-blue-600 text-white hover:bg-blue-700"
+								disabled={activeAction === `save-session-note-${session.id}`}
+							>
+								{#if activeAction === `save-session-note-${session.id}`}
+									<LoaderCircleIcon class="size-4 animate-spin" />
+									Updating...
+								{:else}
+									Update note
+								{/if}
+							</Button>
+						</form>
 					{/each}
 				{/if}
 			</Card.Content>

@@ -7,6 +7,7 @@ import { deidentifyText } from '$lib/server/ai/deidentify';
 import { getRiskModel } from '$lib/server/ai/provider';
 import { db } from '$lib/server/db';
 import { patientHistoryFile, patientHistorySignal } from '$lib/server/db/schema';
+import { syncPatientRecoveryProfile } from '$lib/server/recovery-profile';
 import { recalculatePatientRisk } from '$lib/server/risk';
 import { getS3ObjectBytes } from '$lib/server/storage/s3';
 import { logError, logInfo, logWarn } from '$lib/server/utils/log';
@@ -278,6 +279,7 @@ export async function processHistoryFile(fileId: string) {
 			source: 'history',
 			triggeredByUserId: historyFile.uploadedByUserId
 		});
+		await syncPatientRecoveryProfile(historyFile.patientId);
 
 		logInfo('History file parsed successfully', {
 			fileId,

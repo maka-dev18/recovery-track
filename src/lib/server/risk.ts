@@ -10,14 +10,16 @@ import {
 	associateObservation,
 	patientCheckin,
 	patientHistorySignal,
+	patientSignal,
 	riskAlert,
 	riskScore,
 	therapistPatientAssignment
 } from '$lib/server/db/schema';
+import { ensureRiskFollowUpSession } from '$lib/server/therapy-sessions';
 import { logWarn } from '$lib/server/utils/log';
 
 export type RiskTier = 'low' | 'moderate' | 'high' | 'critical';
-export type RiskSource = 'checkin' | 'observation' | 'manual' | 'chat' | 'history';
+export type RiskSource = 'checkin' | 'observation' | 'manual' | 'chat' | 'history' | 'therapy_session';
 
 export type ConversationRiskLabel =
 	| 'craving_spike'
@@ -173,6 +175,40 @@ function pointsForHistorySignals(
 	];
 }
 
+function pointsForDetectedSignals(
+	signals: Array<{
+		severity: number;
+		signalType: string;
+	}>
+): RiskFactor[] {
+	if (signals.length === 0) {
+		return [];
+	}
+
+	const peakSeverity = signals.reduce((max, signal) => Math.max(max, signal.severity), 0);
+	const signalTypes = new Set(signals.map((signal) => signal.signalType));
+	let points = clamp(Math.round(peakSeverity * 0.18), 0, 22);
+
+	if (signalTypes.has('safety_risk')) {
+		points = Math.max(points, 22);
+	}
+
+	if (signalTypes.has('relapse_risk')) {
+		points = Math.max(points, 18);
+	}
+
+	if (points === 0) {
+		return [];
+	}
+
+	return [
+		{
+			label: 'Care-team clinical signals',
+			points
+		}
+	];
+}
+
 function serializeFactors(factors: RiskFactor[]): string {
 	return JSON.stringify(factors);
 }
@@ -185,7 +221,7 @@ async function createOrRefreshAlert(args: {
 	riskScoreId: string;
 	triggeredByUserId?: string;
 }) {
-	if (args.tier !== 'high' && args.tier !== 'critical') {
+	if (args.tier === 'low') {
 		return null;
 	}
 
@@ -396,6 +432,11 @@ export async function recalculatePatientRisk(args: {
 		orderBy: (table, { desc }) => [desc(table.createdAt)],
 		limit: 8
 	});
+	const recentDetectedSignals = await db.query.patientSignal.findMany({
+		where: and(eq(patientSignal.patientId, args.patientId), gte(patientSignal.occurredAt, observationWindowFloor)),
+		orderBy: (table, { desc }) => [desc(table.occurredAt)],
+		limit: 12
+	});
 
 	const historyWindowFloor = new Date(Date.now() - HISTORY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 	const recentHistorySignals = await db.query.patientHistorySignal.findMany({
@@ -435,8 +476,20 @@ export async function recalculatePatientRisk(args: {
 			signalValueJson: signal.signalValueJson
 		}))
 	);
+	const detectedSignalFactors = pointsForDetectedSignals(
+		recentDetectedSignals.map((signal) => ({
+			severity: signal.severity,
+			signalType: signal.signalType
+		}))
+	);
 
-	const factors = [...checkinFactors, ...observationFactors, ...chatFactors, ...historyFactors];
+	const factors = [
+		...checkinFactors,
+		...observationFactors,
+		...chatFactors,
+		...historyFactors,
+		...detectedSignalFactors
+	];
 	const totalScore = clamp(
 		factors.reduce((sum, factor) => sum + factor.points, 0),
 		0,
@@ -459,18 +512,45 @@ export async function recalculatePatientRisk(args: {
 	const alertId = await createOrRefreshAlert({
 		patientId: args.patientId,
 		tier,
-		reason: tier === 'critical' ? 'Critical relapse risk detected' : 'High relapse risk detected',
+		reason:
+			tier === 'critical'
+				? 'Critical relapse risk detected'
+				: tier === 'high'
+					? 'High relapse risk detected'
+					: 'Moderate relapse risk detected',
 		factors,
 		riskScoreId,
 		triggeredByUserId: args.triggeredByUserId
 	});
+
+	let followUpSessionId: string | null = null;
+	if (tier === 'moderate' || tier === 'high' || tier === 'critical') {
+		const therapistAssignment = await db.query.therapistPatientAssignment.findFirst({
+			where: eq(therapistPatientAssignment.patientId, args.patientId),
+			orderBy: (table, { asc }) => [asc(table.createdAt)]
+		});
+
+		if (therapistAssignment?.therapistId) {
+			const followUp = await ensureRiskFollowUpSession({
+				patientId: args.patientId,
+				therapistId: therapistAssignment.therapistId,
+				tier,
+				reason:
+					tier === 'moderate'
+						? 'Moderate risk follow-up suggested. Confirm a video session.'
+						: 'High-risk follow-up scheduled automatically from the risk engine.'
+			});
+			followUpSessionId = followUp.sessionId;
+		}
+	}
 
 	return {
 		riskScoreId,
 		score: totalScore,
 		tier,
 		factors,
-		alertId
+		alertId,
+		followUpSessionId
 	};
 }
 
@@ -500,8 +580,25 @@ export async function createManualCriticalAlert(args: {
 		triggeredByUserId: args.triggeredByUserId
 	});
 
+	const therapistAssignment = await db.query.therapistPatientAssignment.findFirst({
+		where: eq(therapistPatientAssignment.patientId, args.patientId),
+		orderBy: (table, { asc }) => [asc(table.createdAt)]
+	});
+	let followUpSessionId: string | null = null;
+
+	if (therapistAssignment?.therapistId) {
+		const followUp = await ensureRiskFollowUpSession({
+			patientId: args.patientId,
+			therapistId: therapistAssignment.therapistId,
+			tier: 'critical',
+			reason: args.reason
+		});
+		followUpSessionId = followUp.sessionId;
+	}
+
 	return {
 		riskScoreId,
-		alertId
+		alertId,
+		followUpSessionId
 	};
 }

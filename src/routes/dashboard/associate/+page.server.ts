@@ -1,13 +1,20 @@
 import { fail } from '@sveltejs/kit';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
+import {
+	listAssociateAiConversationsForAssociate,
+	listTherapistAssociateConversationsForAssociate,
+	sendTherapistAssociateMessage
+} from '$lib/server/care-team';
 import { requireRole } from '$lib/server/authz';
+import { aiConfig } from '$lib/server/config/ai';
 import { db } from '$lib/server/db';
 import {
 	associateObservation,
 	associatePatientAssignment,
 	riskScore
 } from '$lib/server/db/schema';
+import { analyzeTextIntoPatientSignal } from '$lib/server/patient-signals';
 import { associateHasPatientAssignment } from '$lib/server/relationships';
 import { recalculatePatientRisk } from '$lib/server/risk';
 
@@ -64,6 +71,8 @@ export const load: PageServerLoad = async (event) => {
 			}
 		}
 	});
+	const therapistConversations = await listTherapistAssociateConversationsForAssociate(associateUser.id);
+	const aiConversations = await listAssociateAiConversationsForAssociate(associateUser.id);
 
 	return {
 		observationCategories: OBSERVATION_CATEGORIES,
@@ -85,7 +94,12 @@ export const load: PageServerLoad = async (event) => {
 				severity: observation.severity,
 				note: observation.note,
 				createdAt: observation.createdAt
-			}))
+			})),
+		therapistConversations,
+		aiConversations,
+		aiFeatures: {
+			chatEnabled: aiConfig.chatEnabled
+		}
 	};
 };
 
@@ -141,6 +155,17 @@ export const actions: Actions = {
 			source: 'observation',
 			observationId,
 			triggeredByUserId: associateUser.id
+		});
+		await analyzeTextIntoPatientSignal({
+			patientId,
+			text: `${category}: ${note}`,
+			source: 'observation',
+			originLabel: 'Associate observation',
+			detectedByUserId: associateUser.id,
+			extraPayload: {
+				category,
+				severity
+			}
 		});
 
 		return {
@@ -209,6 +234,17 @@ export const actions: Actions = {
 			observationId,
 			triggeredByUserId: associateUser.id
 		});
+		await analyzeTextIntoPatientSignal({
+			patientId: existingObservation.patientId,
+			text: `${category}: ${note}`,
+			source: 'observation',
+			originLabel: 'Associate observation update',
+			detectedByUserId: associateUser.id,
+			extraPayload: {
+				category,
+				severity
+			}
+		});
 
 		return {
 			success: `Observation updated. Updated patient risk tier: ${recalculation.tier}.`,
@@ -252,6 +288,62 @@ export const actions: Actions = {
 		return {
 			success: `Observation deleted. Updated patient risk tier: ${recalculation.tier}.`,
 			mode: 'delete-observation' as const
+		};
+	},
+	sendTherapistMessage: async (event) => {
+		const associateUser = requireRole(event, 'associate');
+		const formData = await event.request.formData();
+		const patientId = formData.get('patientId')?.toString() ?? '';
+		const therapistId = formData.get('therapistId')?.toString() ?? '';
+		const content = formData.get('content')?.toString() ?? '';
+
+		if (!patientId || !therapistId) {
+			return fail(400, {
+				message: 'Choose the therapist thread before sending a message.',
+				mode: 'send-therapist-message' as const
+			});
+		}
+
+		try {
+			const result = await sendTherapistAssociateMessage({
+				therapistId,
+				associateId: associateUser.id,
+				patientId,
+				senderUserId: associateUser.id,
+				senderRole: 'associate',
+				content
+			});
+
+			await analyzeTextIntoPatientSignal({
+				patientId,
+				text: content,
+				source: 'conversation',
+				originLabel: 'Associate therapist chat',
+				threadId: result.threadId,
+				messageId: result.messageId,
+				detectedByUserId: associateUser.id,
+				extraPayload: {
+					channel: 'associate_direct',
+					therapistId,
+					associateId: associateUser.id
+				}
+			});
+
+			await recalculatePatientRisk({
+				patientId,
+				source: 'chat',
+				triggeredByUserId: associateUser.id
+			});
+		} catch (error) {
+			return fail(400, {
+				message: error instanceof Error ? error.message : 'Could not send the therapist message.',
+				mode: 'send-therapist-message' as const
+			});
+		}
+
+		return {
+			success: 'Message sent to therapist.',
+			mode: 'send-therapist-message' as const
 		};
 	}
 };

@@ -2,6 +2,7 @@ import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { APIError } from 'better-auth/api';
 import { and, desc, eq, inArray } from 'drizzle-orm';
+import { getRecentOutreachLogs, listInactivePatients, logAdminOutreach } from '$lib/server/activity';
 import { auth } from '$lib/server/auth';
 import { requireRole } from '$lib/server/authz';
 import { aiConfig } from '$lib/server/config/ai';
@@ -176,6 +177,8 @@ async function loadAdminWorkspace() {
 	});
 
 	const queueJobs = await getRecentJobs(25);
+	const inactivePatients = await listInactivePatients({ inactiveAfterDays: 3 });
+	const outreachLogs = await getRecentOutreachLogs(30);
 
 	return {
 		users: managedUsers,
@@ -228,6 +231,37 @@ async function loadAdminWorkspace() {
 				parsedAt: entry.parsedAt
 			})),
 		queueJobs,
+		inactivePatients: inactivePatients.map((entry) => ({
+			patientId: entry.patientId,
+			patientName: entry.patientName,
+			patientEmail: entry.patientEmail,
+			lastActiveAt: entry.lastActiveAt,
+			lastPath: entry.lastPath,
+			inactiveDays: entry.inactiveDays,
+			therapistName: entry.therapist?.name ?? null,
+			therapistEmail: entry.therapist?.email ?? null,
+			associates: entry.associates.map((associate) => ({
+				id: associate.id,
+				name: associate.name,
+				email: associate.email
+			})),
+			latestOutreach: entry.latestOutreach
+				? {
+						channel: entry.latestOutreach.channel,
+						createdAt: entry.latestOutreach.createdAt,
+						targetName: entry.latestOutreach.targetUser?.name ?? entry.latestOutreach.associate?.name ?? null
+					}
+				: null
+		})),
+		outreachLogs: outreachLogs.map((entry) => ({
+			id: entry.id,
+			patientName: entry.patient?.name ?? 'Patient',
+			channel: entry.channel,
+			adminName: entry.adminUser?.name ?? 'Admin',
+			targetName: entry.targetUser?.name ?? entry.associate?.name ?? 'Patient',
+			note: entry.note,
+			createdAt: entry.createdAt
+		})),
 		aiFeatures: {
 			historyIngestEnabled: aiConfig.historyIngestEnabled
 		}
@@ -613,6 +647,48 @@ export const actions: Actions = {
 		return {
 			success: 'Associate assignment removed.',
 			mode: 'remove-associate-assignment' as const
+		};
+	},
+	logOutreach: async (event) => {
+		const adminUser = requireRole(event, 'admin');
+		const formData = await event.request.formData();
+		const patientId = formData.get('patientId')?.toString() ?? '';
+		const channel = formData.get('channel')?.toString() ?? '';
+		const targetUserId = formData.get('targetUserId')?.toString() ?? '';
+		const associateId = formData.get('associateId')?.toString() ?? '';
+		const note = formData.get('note')?.toString().trim() ?? '';
+
+		if (!patientId || !channel) {
+			return fail(400, {
+				message: 'Patient and outreach channel are required.',
+				mode: 'log-outreach' as const
+			});
+		}
+
+		if (
+			channel !== 'call_patient' &&
+			channel !== 'call_associate' &&
+			channel !== 'email_patient' &&
+			channel !== 'email_associate'
+		) {
+			return fail(400, {
+				message: 'Choose a valid outreach action.',
+				mode: 'log-outreach' as const
+			});
+		}
+
+		await logAdminOutreach({
+			patientId,
+			adminUserId: adminUser.id,
+			channel,
+			targetUserId: targetUserId || null,
+			associateId: associateId || null,
+			note: note || null
+		});
+
+		return {
+			success: 'Outreach action logged.',
+			mode: 'log-outreach' as const
 		};
 	}
 };

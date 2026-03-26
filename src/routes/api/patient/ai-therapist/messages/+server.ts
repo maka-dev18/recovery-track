@@ -8,6 +8,7 @@ import { aiConfig, isAIFeatureEnabled } from '$lib/server/config/ai';
 import { requireRole } from '$lib/server/authz';
 import { db } from '$lib/server/db';
 import { aiMessage, aiSession, patientCheckin, patientHistorySignal } from '$lib/server/db/schema';
+import { getPatientPersonalizationContext } from '$lib/server/recovery-profile';
 import { analyzeConversationRisk, recalculatePatientRisk } from '$lib/server/risk';
 import { badRequest, forbidden, rethrowControlFlowError, serverError } from '$lib/server/utils/api';
 import { logError } from '$lib/server/utils/log';
@@ -143,6 +144,7 @@ export const POST: RequestHandler = async (event) => {
 			orderBy: (table, { desc }) => [desc(table.createdAt)],
 			limit: 10
 		});
+		const personalizationContext = await getPatientPersonalizationContext(patientUser.id);
 
 		const modelMessages = historicalMessages.map((message) => ({
 			role:
@@ -161,6 +163,7 @@ export const POST: RequestHandler = async (event) => {
 				'You are an AI therapist assistant for recovery support.',
 				'Use motivational interviewing style and avoid medical diagnosis claims.',
 				'If high-risk intent is expressed, urge immediate human support and emergency services when needed.',
+				`Patient personalization profile:\n${personalizationContext}`,
 				`Recent check-in summary:\n${summarizeCheckins(recentCheckins)}`,
 				`Historical rehab signal summary:\n${summarizeHistorySignals(recentHistorySignals)}`
 			].join('\n\n'),

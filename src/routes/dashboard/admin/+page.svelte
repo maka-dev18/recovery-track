@@ -559,6 +559,193 @@
 		</Card.Root>
 	</section>
 
+	<section class="grid gap-6 xl:grid-cols-2">
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Inactive patients</Card.Title>
+				<Card.Description>
+					Patients who have not logged in recently, with quick outreach options for admins.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				{#if data.inactivePatients.length === 0}
+					<p class="text-muted-foreground text-sm">
+						No patient inactivity alerts are active right now.
+					</p>
+				{:else}
+					{#each data.inactivePatients as patient (patient.patientId)}
+						<div class="space-y-3 rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+							<div class="flex items-start justify-between gap-3">
+								<div>
+									<p class="font-medium">{patient.patientName}</p>
+									<p class="text-muted-foreground text-xs">{patient.patientEmail}</p>
+								</div>
+								<Badge class="bg-amber-100 text-amber-900 hover:bg-amber-100">
+									{patient.inactiveDays ?? "Unknown"} days inactive
+								</Badge>
+							</div>
+							<p class="text-muted-foreground text-xs">
+								Last seen: {formatDate(patient.lastActiveAt)} {patient.lastPath ? `· ${patient.lastPath}` : ""}
+							</p>
+							{#if patient.therapistName}
+								<p class="text-muted-foreground text-xs">
+									Therapist: {patient.therapistName} {patient.therapistEmail ? `· ${patient.therapistEmail}` : ""}
+								</p>
+							{/if}
+							<div class="grid gap-2 md:grid-cols-2">
+								<form
+									method="POST"
+									action="?/logOutreach"
+									use:pendingForm={`call-patient-${patient.patientId}`}
+								>
+									<input type="hidden" name="patientId" value={patient.patientId} />
+									<input type="hidden" name="targetUserId" value={patient.patientId} />
+									<input type="hidden" name="channel" value="call_patient" />
+									<Button
+										type="submit"
+										variant="outline"
+										class="w-full border-blue-200 text-blue-700 hover:bg-blue-50"
+										disabled={activeAction === `call-patient-${patient.patientId}`}
+									>
+										{#if activeAction === `call-patient-${patient.patientId}`}
+											<LoaderCircleIcon class="size-4 animate-spin" />
+										{:else}
+											Log call to patient
+										{/if}
+									</Button>
+								</form>
+								<form
+									method="POST"
+									action="?/logOutreach"
+									use:pendingForm={`email-patient-${patient.patientId}`}
+								>
+									<input type="hidden" name="patientId" value={patient.patientId} />
+									<input type="hidden" name="targetUserId" value={patient.patientId} />
+									<input type="hidden" name="channel" value="email_patient" />
+									<Button
+										type="submit"
+										variant="outline"
+										class="w-full border-blue-200 text-blue-700 hover:bg-blue-50"
+										disabled={activeAction === `email-patient-${patient.patientId}`}
+									>
+										{#if activeAction === `email-patient-${patient.patientId}`}
+											<LoaderCircleIcon class="size-4 animate-spin" />
+										{:else}
+											Log email to patient
+										{/if}
+									</Button>
+								</form>
+							</div>
+							{#if patient.associates.length > 0}
+								<div class="space-y-2 rounded-lg border border-blue-100 bg-white p-3">
+									<p class="text-sm font-medium">Associate outreach</p>
+									{#each patient.associates as associate (associate.id)}
+										<div class="grid gap-2 md:grid-cols-[1fr_auto_auto] md:items-center">
+											<div>
+												<p class="text-sm">{associate.name}</p>
+												<p class="text-muted-foreground text-xs">{associate.email}</p>
+											</div>
+											<form
+												method="POST"
+												action="?/logOutreach"
+												use:pendingForm={`call-associate-${patient.patientId}-${associate.id}`}
+											>
+												<input type="hidden" name="patientId" value={patient.patientId} />
+												<input type="hidden" name="associateId" value={associate.id} />
+												<input type="hidden" name="targetUserId" value={associate.id} />
+												<input type="hidden" name="channel" value="call_associate" />
+												<Button
+													type="submit"
+													variant="outline"
+													class="border-blue-200 text-blue-700 hover:bg-blue-50"
+													disabled={activeAction === `call-associate-${patient.patientId}-${associate.id}`}
+												>
+													{#if activeAction === `call-associate-${patient.patientId}-${associate.id}`}
+														<LoaderCircleIcon class="size-4 animate-spin" />
+													{:else}
+														Log call
+													{/if}
+												</Button>
+											</form>
+											<form
+												method="POST"
+												action="?/logOutreach"
+												use:pendingForm={`email-associate-${patient.patientId}-${associate.id}`}
+											>
+												<input type="hidden" name="patientId" value={patient.patientId} />
+												<input type="hidden" name="associateId" value={associate.id} />
+												<input type="hidden" name="targetUserId" value={associate.id} />
+												<input type="hidden" name="channel" value="email_associate" />
+												<Button
+													type="submit"
+													variant="outline"
+													class="border-blue-200 text-blue-700 hover:bg-blue-50"
+													disabled={activeAction === `email-associate-${patient.patientId}-${associate.id}`}
+												>
+													{#if activeAction === `email-associate-${patient.patientId}-${associate.id}`}
+														<LoaderCircleIcon class="size-4 animate-spin" />
+													{:else}
+														Log email
+													{/if}
+												</Button>
+											</form>
+										</div>
+									{/each}
+								</div>
+							{/if}
+							{#if patient.latestOutreach}
+								<p class="text-muted-foreground text-xs">
+									Last outreach: {patient.latestOutreach.channel.replaceAll("_", " ")} on {formatDate(patient.latestOutreach.createdAt)}
+								</p>
+							{/if}
+						</div>
+					{/each}
+				{/if}
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Outreach history</Card.Title>
+				<Card.Description>Recent admin follow-up actions for inactive patients.</Card.Description>
+			</Card.Header>
+			<Card.Content>
+				<div class="overflow-x-auto">
+					<Table.Root>
+						<Table.Header>
+							<Table.Row>
+								<Table.Head>When</Table.Head>
+								<Table.Head>Patient</Table.Head>
+								<Table.Head>Action</Table.Head>
+								<Table.Head>Target</Table.Head>
+								<Table.Head>Admin</Table.Head>
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{#if data.outreachLogs.length === 0}
+								<Table.Row>
+									<Table.Cell colspan={5} class="text-muted-foreground py-6 text-center">
+										No outreach has been logged yet.
+									</Table.Cell>
+								</Table.Row>
+							{:else}
+								{#each data.outreachLogs as log (log.id)}
+									<Table.Row>
+										<Table.Cell>{formatDate(log.createdAt)}</Table.Cell>
+										<Table.Cell>{log.patientName}</Table.Cell>
+										<Table.Cell>{log.channel.replaceAll("_", " ")}</Table.Cell>
+										<Table.Cell>{log.targetName}</Table.Cell>
+										<Table.Cell>{log.adminName}</Table.Cell>
+									</Table.Row>
+								{/each}
+							{/if}
+						</Table.Body>
+					</Table.Root>
+				</div>
+			</Card.Content>
+		</Card.Root>
+	</section>
+
 	<section class="grid gap-6">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>

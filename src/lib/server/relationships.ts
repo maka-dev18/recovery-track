@@ -20,6 +20,15 @@ export async function getAssociatePatientIds(associateId: string): Promise<strin
 	return assignments.map((assignment) => assignment.patientId);
 }
 
+export async function getPatientTherapistIds(patientId: string): Promise<string[]> {
+	const assignments = await db
+		.select({ therapistId: therapistPatientAssignment.therapistId })
+		.from(therapistPatientAssignment)
+		.where(eq(therapistPatientAssignment.patientId, patientId));
+
+	return assignments.map((assignment) => assignment.therapistId);
+}
+
 export async function therapistHasPatientAssignment(
 	therapistId: string,
 	patientId: string
