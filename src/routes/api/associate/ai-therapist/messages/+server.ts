@@ -3,6 +3,7 @@ import { streamText } from 'ai';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { deidentifyText } from '$lib/server/ai/deidentify';
+import { summarizeCheckins, summarizeHistorySignals } from '$lib/server/ai-therapist';
 import { getTextModel } from '$lib/server/ai/provider';
 import { requireRole } from '$lib/server/authz';
 import { aiConfig, isAIFeatureEnabled } from '$lib/server/config/ai';
@@ -14,65 +15,18 @@ import { getPatientPersonalizationContext } from '$lib/server/recovery-profile';
 import { recalculatePatientRisk } from '$lib/server/risk';
 import { badRequest, forbidden, rethrowControlFlowError, serverError } from '$lib/server/utils/api';
 import { logError } from '$lib/server/utils/log';
+import { getPreferredName, virtualTherapistProfile } from '$lib/shared/virtual-therapist';
 
 const requestSchema = z.object({
 	patientId: z.string().uuid(),
 	text: z.string().trim().min(1).max(4_000)
 });
 
-function summarizeCheckins(
-	checkins: Array<{
-		mood: number;
-		craving: number;
-		stress: number;
-		sleepHours: number;
-		note: string | null;
-		createdAt: Date;
-	}>
-) {
-	if (checkins.length === 0) {
-		return 'No recent patient self-check-ins are available.';
-	}
-
-	return checkins
-		.map((checkin) => {
-			const note = checkin.note ? ` note=${deidentifyText(checkin.note).slice(0, 120)}` : '';
-			return `${checkin.createdAt.toISOString()}: mood=${checkin.mood}, craving=${checkin.craving}, stress=${checkin.stress}, sleep=${checkin.sleepHours}${note}`;
-		})
-		.join('\n');
-}
-
-function summarizeHistorySignals(
-	historySignals: Array<{ signalType: string; signalValueJson: string; confidence: number; createdAt: Date }>
-) {
-	if (historySignals.length === 0) {
-		return 'No parsed historical rehab signals are available.';
-	}
-
-	return historySignals
-		.map((signal) => {
-			let summary = '';
-			try {
-				const parsed = JSON.parse(signal.signalValueJson) as { summary?: unknown; label?: unknown };
-				if (typeof parsed.summary === 'string') {
-					summary = parsed.summary;
-				} else if (typeof parsed.label === 'string') {
-					summary = parsed.label;
-				}
-			} catch {
-				summary = '';
-			}
-
-			return `${signal.createdAt.toISOString()}: ${signal.signalType} confidence=${signal.confidence}${summary ? ` summary=${deidentifyText(summary).slice(0, 120)}` : ''}`;
-		})
-		.join('\n');
-}
-
 export const POST: RequestHandler = async (event) => {
 	try {
 		const associateUser = requireRole(event, 'associate');
 		if (!isAIFeatureEnabled('chat')) {
-			return forbidden('Associate AI support chat is currently disabled.');
+			return forbidden(`${virtualTherapistProfile.name} support chat is currently disabled.`);
 		}
 
 		if (!aiConfig.googleApiKey) {
@@ -129,6 +83,7 @@ export const POST: RequestHandler = async (event) => {
 			limit: 8
 		});
 		const personalizationContext = await getPatientPersonalizationContext(payload.patientId);
+		const patientPreferredName = getPreferredName(patientRecord.name);
 
 		const modelMessages = historicalMessages.map((message) => ({
 			role:
@@ -144,7 +99,8 @@ export const POST: RequestHandler = async (event) => {
 		const result = streamText({
 			model: getTextModel(),
 			system: [
-				'You are an AI recovery-support assistant speaking with a patient associate or guardian.',
+				`You are ${virtualTherapistProfile.name}, a recovery-support assistant speaking with a patient associate or guardian.`,
+				`The patient is ${patientRecord.name}. You already know ${patientPreferredName}'s recovery history and should speak as someone who understands their context.`,
 				'Help the associate report daily habits, sleep, diet, mood changes, relapse warning signs, and protective factors.',
 				'Encourage escalation to the therapist for medium or high-risk concerns. Be concrete and concise.',
 				`Patient context:\n${personalizationContext}`,

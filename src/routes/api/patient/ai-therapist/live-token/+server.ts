@@ -11,10 +11,12 @@ import {
 	isNativeAudioLiveModel,
 	requireGoogleApiKey
 } from '$lib/server/config/ai';
+import { buildPatientAiTherapistSystemPrompt } from '$lib/server/ai-therapist';
 import { db } from '$lib/server/db';
-import { aiSession } from '$lib/server/db/schema';
+import { aiMessage, aiSession } from '$lib/server/db/schema';
 import { badRequest, created, forbidden, rethrowControlFlowError, serverError } from '$lib/server/utils/api';
 import { logError, logInfo, logWarn } from '$lib/server/utils/log';
+import { virtualTherapistProfile } from '$lib/shared/virtual-therapist';
 
 const requestSchema = z.object({
 	sessionId: z.string().uuid().optional()
@@ -58,7 +60,7 @@ export const POST: RequestHandler = async (event) => {
 	try {
 		const patientUser = requireRole(event, 'patient');
 		if (!isAIFeatureEnabled('liveVoice')) {
-			return forbidden('Live voice therapist sessions are currently disabled.');
+			return forbidden(`Live voice sessions with ${virtualTherapistProfile.name} are currently disabled.`);
 		}
 
 		const payload = requestSchema.parse(
@@ -73,6 +75,18 @@ export const POST: RequestHandler = async (event) => {
 		});
 
 		const session = await getOrCreateLiveSession(patientUser.id, payload.sessionId);
+		const existingAssistantReply = await db.query.aiMessage.findFirst({
+			where: and(eq(aiMessage.sessionId, session.id), eq(aiMessage.role, 'assistant')),
+			columns: {
+				id: true
+			}
+		});
+		const systemInstruction = await buildPatientAiTherapistSystemPrompt({
+			patientId: patientUser.id,
+			patientName: patientUser.name,
+			channel: 'live_voice',
+			hasAssistantHistory: Boolean(existingAssistantReply)
+		});
 		const client = new GoogleGenAI({
 			apiKey: requireGoogleApiKey(),
 			httpOptions: { apiVersion: 'v1alpha' }
@@ -95,7 +109,8 @@ export const POST: RequestHandler = async (event) => {
 							config: {
 								responseModalities: [responseModality],
 								inputAudioTranscription: {},
-								outputAudioTranscription: {}
+								outputAudioTranscription: {},
+								systemInstruction
 							}
 						}
 					}

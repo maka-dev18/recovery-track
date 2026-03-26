@@ -13,8 +13,10 @@
 	import { Label } from '$lib/components/ui/label';
 	import * as Table from '$lib/components/ui/table';
 	import { Textarea } from '$lib/components/ui/textarea';
+	import { getPreferredName, virtualTherapistProfile } from '$lib/shared/virtual-therapist';
 
 	type PatientPageData = {
+		patientName: string;
 		latestRisk: {
 			id: string;
 			score: number;
@@ -363,7 +365,7 @@
 
 	async function sendChatMessage() {
 		if (!data.aiFeatures.chatEnabled) {
-			chatError = 'AI therapist chat is currently disabled.';
+			chatError = `${virtualTherapistProfile.name} chat is currently disabled.`;
 			return;
 		}
 
@@ -394,7 +396,7 @@
 
 			if (!response.ok) {
 				const payload = await response.json().catch(() => null);
-				throw new Error(payload?.message ?? 'AI therapist message failed.');
+				throw new Error(payload?.message ?? `${virtualTherapistProfile.name} message failed.`);
 			}
 
 			const newSessionId = response.headers.get('x-ai-session-id');
@@ -772,7 +774,7 @@
 
 		if (!data.aiFeatures.liveVoiceEnabled) {
 			liveStatus = 'error';
-			liveError = 'Live voice therapist sessions are currently disabled.';
+			liveError = `Live voice sessions with ${virtualTherapistProfile.name} are currently disabled.`;
 			addLiveDiagnostic('start_blocked_feature_disabled');
 			return;
 		}
@@ -1276,16 +1278,16 @@
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
-				<Badge class="w-fit bg-blue-100 text-blue-700 hover:bg-blue-100">AI therapist</Badge>
+				<Badge class="w-fit bg-blue-100 text-blue-700 hover:bg-blue-100">{virtualTherapistProfile.name}</Badge>
 				<Card.Title>Therapy chat</Card.Title>
 				<Card.Description>
-					Confidential AI-guided conversation with risk-aware escalation monitoring.
+					Confidential conversation with {virtualTherapistProfile.name}, guided by your recovery history and risk-aware escalation monitoring.
 				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if !data.aiFeatures.chatEnabled}
 					<div class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-						AI therapist chat is disabled right now. Continue using daily check-ins and request human support if needed.
+						{virtualTherapistProfile.name} chat is disabled right now. Continue using daily check-ins and request human support if needed.
 					</div>
 				{:else}
 					{#if chatError}
@@ -1295,14 +1297,20 @@
 					{/if}
 					<div class="max-h-[320px] space-y-2 overflow-y-auto rounded-md border bg-blue-50/30 p-3">
 						{#if chatMessages.length === 0}
-							<p class="text-muted-foreground text-sm">
-								Start a conversation. If you mention urgent safety concerns, the care team is alerted.
-							</p>
+							<div class="space-y-2 rounded-md bg-white px-3 py-3 text-sm">
+								<p class="font-medium">Hi {getPreferredName(data.patientName)}, I&apos;m {virtualTherapistProfile.name}.</p>
+								<p class="text-muted-foreground">
+									I already have your recovery history, goals, and recent check-ins in view, so you can start anywhere.
+								</p>
+								<p class="text-muted-foreground">
+									If you mention urgent safety concerns, the care team is alerted right away.
+								</p>
+							</div>
 						{:else}
 							{#each chatMessages as message (message.id)}
 								<div class={`rounded-md px-3 py-2 text-sm ${message.role === 'user' ? 'ml-auto max-w-[85%] bg-blue-600 text-white' : 'max-w-[90%] bg-white'}`}>
 									<p class="text-xs opacity-70">
-										{message.role === 'user' ? 'You' : 'AI therapist'} · {formatTimestamp(message.createdAt)}
+										{message.role === 'user' ? 'You' : virtualTherapistProfile.name} · {formatTimestamp(message.createdAt)}
 									</p>
 									<p class="whitespace-pre-wrap">{message.content}</p>
 								</div>
@@ -1342,9 +1350,9 @@
 
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
-				<Card.Title>Live voice session</Card.Title>
+				<Card.Title>Live voice with {virtualTherapistProfile.name}</Card.Title>
 				<Card.Description>
-					Speak naturally. Transcript events are monitored for high-risk signals in real time.
+					Speak naturally with {virtualTherapistProfile.name}. Responses are personalized from your recovery history and transcript events are monitored for high-risk signals in real time.
 				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
@@ -1388,7 +1396,7 @@
 					</p>
 				{/if}
 				<p class="text-muted-foreground text-xs">
-					Microphone audio is streamed to Gemini Live with ephemeral tokens; transcripts are stored for care safety monitoring.
+					Microphone audio is streamed to Gemini Live for {virtualTherapistProfile.name}; transcripts are stored for care safety monitoring.
 				</p>
 				<details class="rounded-md border bg-white p-3 text-xs">
 					<summary class="cursor-pointer font-medium">Connection diagnostics</summary>
@@ -1408,18 +1416,18 @@
 					</div>
 				</details>
 				<div class="max-h-[220px] space-y-2 overflow-y-auto rounded-md border bg-blue-50/30 p-3">
-					{#if liveLog.length === 0}
-						<p class="text-muted-foreground text-sm">
-							No live transcript yet. Start a session and speak into your microphone.
-						</p>
-					{:else}
-						{#each liveLog as entry (entry.id)}
-							<div class={`rounded-md px-3 py-2 text-sm ${entry.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white'}`}>
-								<p class="text-xs opacity-70">
-									{entry.role === 'user' ? 'You' : 'AI therapist'} · {formatTimestamp(entry.createdAt)}
-								</p>
-								<p class="whitespace-pre-wrap">{entry.text}</p>
-							</div>
+						{#if liveLog.length === 0}
+							<p class="text-muted-foreground text-sm">
+								No live transcript yet. Start a session and {virtualTherapistProfile.name} will respond using your name and recovery context.
+							</p>
+						{:else}
+							{#each liveLog as entry (entry.id)}
+								<div class={`rounded-md px-3 py-2 text-sm ${entry.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white'}`}>
+									<p class="text-xs opacity-70">
+										{entry.role === 'user' ? 'You' : virtualTherapistProfile.name} · {formatTimestamp(entry.createdAt)}
+									</p>
+									<p class="whitespace-pre-wrap">{entry.text}</p>
+								</div>
 						{/each}
 					{/if}
 				</div>

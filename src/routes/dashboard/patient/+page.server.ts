@@ -1,5 +1,5 @@
 import { fail } from '@sveltejs/kit';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
 import { listTherapistDirectConversationsForPatient, sendTherapistDirectMessage } from '$lib/server/conversations';
 import { buildPatientRecommendations, listCopingActivity, listPatientBadges, logCopingActivity, syncPatientBadges } from '$lib/server/engagement';
@@ -68,6 +68,7 @@ export const load: PageServerLoad = async (event) => {
 	const recentSignals = await listRecentSignalsForPatient(patientUser.id, 10);
 
 	return {
+		patientName: patientUser.name,
 		latestRisk,
 		recentCheckins,
 		recentAlerts,

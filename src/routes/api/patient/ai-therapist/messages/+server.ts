@@ -4,14 +4,15 @@ import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { deidentifyText } from '$lib/server/ai/deidentify';
 import { getTextModel } from '$lib/server/ai/provider';
+import { buildPatientAiTherapistSystemPrompt } from '$lib/server/ai-therapist';
 import { aiConfig, isAIFeatureEnabled } from '$lib/server/config/ai';
 import { requireRole } from '$lib/server/authz';
 import { db } from '$lib/server/db';
-import { aiMessage, aiSession, patientCheckin, patientHistorySignal } from '$lib/server/db/schema';
-import { getPatientPersonalizationContext } from '$lib/server/recovery-profile';
+import { aiMessage, aiSession } from '$lib/server/db/schema';
 import { analyzeConversationRisk, recalculatePatientRisk } from '$lib/server/risk';
 import { badRequest, forbidden, rethrowControlFlowError, serverError } from '$lib/server/utils/api';
 import { logError } from '$lib/server/utils/log';
+import { virtualTherapistProfile } from '$lib/shared/virtual-therapist';
 
 const requestSchema = z.object({
 	sessionId: z.string().uuid().optional(),
@@ -48,64 +49,11 @@ async function getOrCreateTextSession(patientId: string, sessionId?: string) {
 	return created;
 }
 
-function summarizeCheckins(
-	checkins: Array<{
-		mood: number;
-		craving: number;
-		stress: number;
-		sleepHours: number;
-		note: string | null;
-		createdAt: Date;
-	}>
-): string {
-	if (checkins.length === 0) {
-		return 'No recent check-ins available.';
-	}
-
-	return checkins
-		.map((checkin) => {
-			const note = checkin.note ? ` note=${deidentifyText(checkin.note).slice(0, 120)}` : '';
-			return `${checkin.createdAt.toISOString()}: mood=${checkin.mood}, craving=${checkin.craving}, stress=${checkin.stress}, sleep=${checkin.sleepHours}${note}`;
-		})
-		.join('\n');
-}
-
-function summarizeHistorySignals(
-	historySignals: Array<{ signalType: string; signalValueJson: string; confidence: number; createdAt: Date }>
-): string {
-	if (historySignals.length === 0) {
-		return 'No historical rehabilitation signals parsed yet.';
-	}
-
-	return historySignals
-		.map((signal) => {
-			let riskWeight = 'n/a';
-			let excerpt = '';
-			try {
-				const parsed = JSON.parse(signal.signalValueJson) as { riskWeight?: unknown; summary?: unknown; label?: unknown };
-				if (typeof parsed.riskWeight === 'number') {
-					riskWeight = String(Math.round(parsed.riskWeight));
-				}
-
-				if (typeof parsed.summary === 'string') {
-					excerpt = parsed.summary.slice(0, 120);
-				} else if (typeof parsed.label === 'string') {
-					excerpt = parsed.label.slice(0, 80);
-				}
-			} catch {
-				excerpt = '';
-			}
-
-			return `${signal.createdAt.toISOString()}: ${signal.signalType} riskWeight=${riskWeight} confidence=${signal.confidence}${excerpt ? ` summary=${deidentifyText(excerpt)}` : ''}`;
-		})
-		.join('\n');
-}
-
 export const POST: RequestHandler = async (event) => {
 	try {
 		const patientUser = requireRole(event, 'patient');
 		if (!isAIFeatureEnabled('chat')) {
-			return forbidden('AI therapist chat is currently disabled.');
+			return forbidden(`${virtualTherapistProfile.name} chat is currently disabled.`);
 		}
 
 		if (!aiConfig.googleApiKey) {
@@ -133,19 +81,6 @@ export const POST: RequestHandler = async (event) => {
 			limit: 30
 		});
 
-		const recentCheckins = await db.query.patientCheckin.findMany({
-			where: eq(patientCheckin.patientId, patientUser.id),
-			orderBy: (table, { desc }) => [desc(table.createdAt)],
-			limit: 6
-		});
-
-		const recentHistorySignals = await db.query.patientHistorySignal.findMany({
-			where: eq(patientHistorySignal.patientId, patientUser.id),
-			orderBy: (table, { desc }) => [desc(table.createdAt)],
-			limit: 10
-		});
-		const personalizationContext = await getPatientPersonalizationContext(patientUser.id);
-
 		const modelMessages = historicalMessages.map((message) => ({
 			role:
 				message.role === 'assistant'
@@ -155,18 +90,17 @@ export const POST: RequestHandler = async (event) => {
 						: ('user' as const),
 			content: deidentifyText(message.content).slice(0, 1_200)
 		}));
+		const systemPrompt = await buildPatientAiTherapistSystemPrompt({
+			patientId: patientUser.id,
+			patientName: patientUser.name,
+			channel: 'text',
+			hasAssistantHistory: historicalMessages.some((message) => message.role === 'assistant')
+		});
 
 		let assistantOutput = '';
 		const result = streamText({
 			model: getTextModel(),
-			system: [
-				'You are an AI therapist assistant for recovery support.',
-				'Use motivational interviewing style and avoid medical diagnosis claims.',
-				'If high-risk intent is expressed, urge immediate human support and emergency services when needed.',
-				`Patient personalization profile:\n${personalizationContext}`,
-				`Recent check-in summary:\n${summarizeCheckins(recentCheckins)}`,
-				`Historical rehab signal summary:\n${summarizeHistorySignals(recentHistorySignals)}`
-			].join('\n\n'),
+			system: systemPrompt,
 			messages: modelMessages,
 			onChunk(eventChunk) {
 				if (eventChunk.chunk.type === 'text-delta') {

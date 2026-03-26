@@ -9,6 +9,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import * as Table from '$lib/components/ui/table';
 	import { Textarea } from '$lib/components/ui/textarea';
+	import { virtualTherapistProfile } from '$lib/shared/virtual-therapist';
 
 	type AssociatePageData = {
 		observationCategories: string[];
@@ -150,7 +151,7 @@
 							{
 								id: assistantMessageId,
 								role: 'assistant',
-								senderName: 'AI therapist',
+								senderName: virtualTherapistProfile.name,
 								content: '',
 								createdAt: new Date()
 							}
@@ -606,7 +607,7 @@
 
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
-				<Badge class="w-fit bg-blue-100 text-blue-700 hover:bg-blue-100">AI therapist</Badge>
+				<Badge class="w-fit bg-blue-100 text-blue-700 hover:bg-blue-100">{virtualTherapistProfile.name}</Badge>
 				<Card.Title>AI reporting assistant</Card.Title>
 				<Card.Description>
 					Turn daily habit updates into structured recovery notes before escalation is needed.
@@ -648,7 +649,7 @@
 										class={`rounded-md px-3 py-2 text-sm ${message.role === 'associate' ? 'ml-auto max-w-[90%] bg-blue-600 text-white' : 'max-w-[90%] bg-slate-100 text-slate-900'}`}
 									>
 										<p class="text-xs opacity-70">
-											{message.role === 'associate' ? 'You' : 'AI therapist'} · {formatDate(message.createdAt)}
+											{message.role === 'associate' ? 'You' : virtualTherapistProfile.name} · {formatDate(message.createdAt)}
 										</p>
 										<p class="whitespace-pre-wrap">{message.content}</p>
 									</div>
@@ -674,7 +675,7 @@
 								<LoaderCircleIcon class="size-4 animate-spin" />
 								Sending to AI...
 							{:else}
-								Send to AI therapist
+								Send to {virtualTherapistProfile.name}
 							{/if}
 						</Button>
 					</div>
