@@ -38,7 +38,8 @@ export const POST: RequestHandler = async (event) => {
 			.update(patientHistoryFile)
 			.set({
 				parseStatus: 'pending',
-				parseError: null
+				parseError: null,
+				parsedAt: null
 			})
 			.where(eq(patientHistoryFile.id, historyFile.id));
 

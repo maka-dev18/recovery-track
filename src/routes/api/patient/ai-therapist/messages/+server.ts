@@ -1,10 +1,11 @@
 import { and, eq } from 'drizzle-orm';
-import { streamText } from 'ai';
+import { stepCountIs, streamText } from 'ai';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { deidentifyText } from '$lib/server/ai/deidentify';
 import { getTextModel } from '$lib/server/ai/provider';
 import { buildPatientAiTherapistSystemPrompt } from '$lib/server/ai-therapist';
+import { buildPatientContextTools } from '$lib/server/ai-therapist-tools';
 import { aiConfig, isAIFeatureEnabled } from '$lib/server/config/ai';
 import { requireRole } from '$lib/server/authz';
 import { db } from '$lib/server/db';
@@ -102,6 +103,8 @@ export const POST: RequestHandler = async (event) => {
 			model: getTextModel(),
 			system: systemPrompt,
 			messages: modelMessages,
+			tools: buildPatientContextTools(patientUser.id),
+			stopWhen: stepCountIs(5),
 			onChunk(eventChunk) {
 				if (eventChunk.chunk.type === 'text-delta') {
 					assistantOutput += eventChunk.chunk.text;

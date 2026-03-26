@@ -1,9 +1,10 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
-import { streamText } from 'ai';
+import { stepCountIs, streamText } from 'ai';
 import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { deidentifyText } from '$lib/server/ai/deidentify';
 import { summarizeCheckins, summarizeHistorySignals } from '$lib/server/ai-therapist';
+import { buildPatientContextTools } from '$lib/server/ai-therapist-tools';
 import { getTextModel } from '$lib/server/ai/provider';
 import { requireRole } from '$lib/server/authz';
 import { aiConfig, isAIFeatureEnabled } from '$lib/server/config/ai';
@@ -101,6 +102,7 @@ export const POST: RequestHandler = async (event) => {
 			system: [
 				`You are ${virtualTherapistProfile.name}, a recovery-support assistant speaking with a patient associate or guardian.`,
 				`The patient is ${patientRecord.name}. You already know ${patientPreferredName}'s recovery history and should speak as someone who understands their context.`,
+				'If you need more complete or more current patient information, use the available patient context tools instead of guessing.',
 				'Help the associate report daily habits, sleep, diet, mood changes, relapse warning signs, and protective factors.',
 				'Encourage escalation to the therapist for medium or high-risk concerns. Be concrete and concise.',
 				`Patient context:\n${personalizationContext}`,
@@ -108,6 +110,8 @@ export const POST: RequestHandler = async (event) => {
 				`Historical rehab context:\n${summarizeHistorySignals(recentHistorySignals)}`
 			].join('\n\n'),
 			messages: modelMessages,
+			tools: buildPatientContextTools(payload.patientId),
+			stopWhen: stepCountIs(5),
 			onChunk(eventChunk) {
 				if (eventChunk.chunk.type === 'text-delta') {
 					assistantOutput += eventChunk.chunk.text;

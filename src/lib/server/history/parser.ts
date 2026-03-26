@@ -1,4 +1,3 @@
-import { parse as parseCsv } from 'csv-parse/sync';
 import { generateObject } from 'ai';
 import { eq } from 'drizzle-orm';
 import { PDFParse } from 'pdf-parse';
@@ -7,95 +6,24 @@ import { deidentifyText } from '$lib/server/ai/deidentify';
 import { getRiskModel } from '$lib/server/ai/provider';
 import { db } from '$lib/server/db';
 import { patientHistoryFile, patientHistorySignal } from '$lib/server/db/schema';
+import {
+	clamp,
+	extractSignalsFromCsvText,
+	inferTextRiskWeight,
+	type HistorySignalCandidate
+} from '$lib/server/history/parser-core';
 import { syncPatientRecoveryProfile } from '$lib/server/recovery-profile';
 import { recalculatePatientRisk } from '$lib/server/risk';
 import { getS3ObjectBytes } from '$lib/server/storage/s3';
 import { logError, logInfo, logWarn } from '$lib/server/utils/log';
 
-function clamp(value: number, min: number, max: number): number {
-	return Math.max(min, Math.min(max, value));
-}
-
-function parseNumeric(value: unknown): number | null {
-	if (typeof value === 'number' && Number.isFinite(value)) {
-		return value;
-	}
-
-	if (typeof value === 'string' && value.trim() !== '') {
-		const parsed = Number.parseFloat(value);
-		if (Number.isFinite(parsed)) {
-			return parsed;
-		}
-	}
-
-	return null;
-}
-
-function parseDateCandidate(record: Record<string, unknown>): Date | null {
-	const dateKeys = ['date', 'timestamp', 'created_at', 'recorded_at', 'occurred_at'];
-
-	for (const key of dateKeys) {
-		const value = record[key];
-		if (typeof value !== 'string' || value.trim() === '') continue;
-		const parsed = new Date(value);
-		if (!Number.isNaN(parsed.getTime())) {
-			return parsed;
-		}
-	}
-
-	return null;
-}
-
-function scoreHistoricalRecord(record: Record<string, unknown>): number {
-	const mood = parseNumeric(record.mood);
-	const craving = parseNumeric(record.craving);
-	const stress = parseNumeric(record.stress);
-	const sleepHours = parseNumeric(record.sleepHours ?? record.sleep_hours);
-	const explicitScore = parseNumeric(record.riskScore ?? record.risk_score ?? record.score);
-
-	if (explicitScore !== null) {
-		return clamp(Math.round(explicitScore), 0, 100);
-	}
-
-	let score = 0;
-	if (mood !== null) score += clamp((5 - mood) * 10, 0, 40);
-	if (craving !== null) score += clamp(craving * 4, 0, 40);
-	if (stress !== null) score += clamp(stress * 2.5, 0, 25);
-	if (sleepHours !== null) score += clamp((8 - sleepHours) * 3, 0, 24);
-
-	return clamp(Math.round(score), 0, 100);
-}
-
-function extractSignalsFromCsvText(
-	csvText: string
-): Array<{ signalType: string; signalValue: Record<string, unknown>; confidence: number; occurredAt: Date | null }> {
-	const rows = parseCsv(csvText, {
-		columns: true,
-		skip_empty_lines: true,
-		trim: true,
-		relax_column_count: true
-	}) as Array<Record<string, unknown>>;
-
-	return rows.slice(0, 500).map((row) => {
-		const riskWeight = scoreHistoricalRecord(row);
-		const occurredAt = parseDateCandidate(row);
-
-		return {
-			signalType: 'historical_record',
-			signalValue: {
-				riskWeight,
-				source: 'csv',
-				row
-			},
-			confidence: 80,
-			occurredAt
-		};
-	});
-}
-
 const pdfSignalSchema = z.object({
 	summary: z.string().max(1000),
+	journeySummary: z.string().max(1000),
 	baselineRisk: z.number().int().min(0).max(100),
+	mainTriggers: z.array(z.string().min(1).max(80)).max(8),
+	returnPatterns: z.array(z.string().min(1).max(140)).max(6),
+	protectiveFactors: z.array(z.string().min(1).max(80)).max(8),
 	warningSignals: z.array(
 		z.object({
 			label: z.string().min(1).max(80),
@@ -107,9 +35,16 @@ const pdfSignalSchema = z.object({
 
 async function extractSignalsFromPdfText(
 	pdfText: string
-): Promise<Array<{ signalType: string; signalValue: Record<string, unknown>; confidence: number; occurredAt: Date | null }>> {
+): Promise<HistorySignalCandidate[]> {
 	const compactText = pdfText.replace(/\s+/g, ' ').trim().slice(0, 18_000);
+	if (!compactText) {
+		throw new Error('PDF history file did not contain readable text.');
+	}
+
 	const deidentified = deidentifyText(compactText);
+	if (!deidentified) {
+		throw new Error('PDF history file could not be converted into usable clinical text.');
+	}
 
 	const fallbackSignals = [
 		{
@@ -124,31 +59,22 @@ async function extractSignalsFromPdfText(
 		}
 	];
 
-	if (!deidentified) {
-		return fallbackSignals;
-	}
-
 	try {
 		const result = await generateObject({
 			model: getRiskModel(),
 			schema: pdfSignalSchema,
 			system:
-				'You analyze historical rehabilitation notes. Return objective JSON with risk baseline and warning signals only.',
+				'You analyze historical rehabilitation notes. Return objective JSON with a concise rehab journey summary, relapse triggers, return-to-use patterns, protective factors, baseline risk, and warning signals only.',
 			prompt: [
 				'Extract clinically relevant risk signals from this rehabilitation history.',
-				'Focus on relapse indicators, adherence, crisis patterns, and protective factors.',
+				'Focus on relapse indicators, adherence, crisis patterns, repeated triggers, and protective factors.',
 				'Input:',
 				deidentified
 			].join('\n\n')
 		});
 
 		const parsed = result.object;
-		const signals: Array<{
-			signalType: string;
-			signalValue: Record<string, unknown>;
-			confidence: number;
-			occurredAt: Date | null;
-		}> = [
+		const signals: HistorySignalCandidate[] = [
 			{
 				signalType: 'history_summary',
 				signalValue: {
@@ -158,8 +84,53 @@ async function extractSignalsFromPdfText(
 				},
 				confidence: 75,
 				occurredAt: null
+			},
+			{
+				signalType: 'rehab_journey',
+				signalValue: {
+					source: 'pdf_ai',
+					summary: parsed.journeySummary
+				},
+				confidence: 72,
+				occurredAt: null
 			}
 		];
+
+		for (const trigger of parsed.mainTriggers.slice(0, 8)) {
+			signals.push({
+				signalType: 'relapse_trigger',
+				signalValue: {
+					label: trigger,
+					source: 'pdf_ai'
+				},
+				confidence: 72,
+				occurredAt: null
+			});
+		}
+
+		for (const pattern of parsed.returnPatterns.slice(0, 6)) {
+			signals.push({
+				signalType: 'return_pattern',
+				signalValue: {
+					summary: pattern,
+					source: 'pdf_ai'
+				},
+				confidence: 72,
+				occurredAt: null
+			});
+		}
+
+		for (const protective of parsed.protectiveFactors.slice(0, 8)) {
+			signals.push({
+				signalType: 'protective_factor',
+				signalValue: {
+					label: protective,
+					source: 'pdf_ai'
+				},
+				confidence: 72,
+				occurredAt: null
+			});
+		}
 
 		for (const warning of parsed.warningSignals.slice(0, 12)) {
 			signals.push({
@@ -184,24 +155,6 @@ async function extractSignalsFromPdfText(
 	}
 }
 
-function inferTextRiskWeight(text: string): number {
-	const lowered = text.toLowerCase();
-	const rules: Array<{ pattern: RegExp; points: number }> = [
-		{ pattern: /relapse|reuse|using again|recurrence/g, points: 18 },
-		{ pattern: /overdose|self harm|suicid|unsafe/g, points: 28 },
-		{ pattern: /missed session|noncompliant|dropout/g, points: 10 },
-		{ pattern: /support network|stable housing|adherent|improving/g, points: -8 }
-	];
-
-	let score = 35;
-	for (const rule of rules) {
-		const matches = lowered.match(rule.pattern)?.length ?? 0;
-		score += matches * rule.points;
-	}
-
-	return clamp(score, 0, 100);
-}
-
 async function parsePdfBuffer(buffer: Buffer) {
 	const parser = new PDFParse({ data: buffer });
 	try {
@@ -224,7 +177,7 @@ export async function processHistoryFile(fileId: string) {
 
 	await db
 		.update(patientHistoryFile)
-		.set({ parseStatus: 'parsing', parseError: null })
+		.set({ parseStatus: 'parsing', parseError: null, parsedAt: null })
 		.where(eq(patientHistoryFile.id, fileId));
 
 	try {
@@ -233,12 +186,7 @@ export async function processHistoryFile(fileId: string) {
 		const isPdf =
 			historyFile.mimeType.includes('pdf') || historyFile.fileName.toLowerCase().endsWith('.pdf');
 
-		let signals: Array<{
-			signalType: string;
-			signalValue: Record<string, unknown>;
-			confidence: number;
-			occurredAt: Date | null;
-		}> = [];
+		let signals: HistorySignalCandidate[] = [];
 
 		if (isCsv) {
 			signals = extractSignalsFromCsvText(objectBytes.toString('utf8'));
@@ -247,6 +195,10 @@ export async function processHistoryFile(fileId: string) {
 			signals = await extractSignalsFromPdfText(pdfText);
 		} else {
 			throw new Error(`Unsupported history file type: ${historyFile.mimeType}`);
+		}
+
+		if (signals.length === 0) {
+			throw new Error('History file did not produce any usable clinical signals.');
 		}
 
 		await db.delete(patientHistorySignal).where(eq(patientHistorySignal.fileId, fileId));
@@ -265,6 +217,13 @@ export async function processHistoryFile(fileId: string) {
 			);
 		}
 
+		await recalculatePatientRisk({
+			patientId: historyFile.patientId,
+			source: 'history',
+			triggeredByUserId: historyFile.uploadedByUserId
+		});
+		await syncPatientRecoveryProfile(historyFile.patientId);
+
 		await db
 			.update(patientHistoryFile)
 			.set({
@@ -273,13 +232,6 @@ export async function processHistoryFile(fileId: string) {
 				parsedAt: new Date()
 			})
 			.where(eq(patientHistoryFile.id, fileId));
-
-		await recalculatePatientRisk({
-			patientId: historyFile.patientId,
-			source: 'history',
-			triggeredByUserId: historyFile.uploadedByUserId
-		});
-		await syncPatientRecoveryProfile(historyFile.patientId);
 
 		logInfo('History file parsed successfully', {
 			fileId,
@@ -292,7 +244,8 @@ export async function processHistoryFile(fileId: string) {
 			.update(patientHistoryFile)
 			.set({
 				parseStatus: 'failed',
-				parseError: parseError.slice(0, 1_000)
+				parseError: parseError.slice(0, 1_000),
+				parsedAt: null
 			})
 			.where(eq(patientHistoryFile.id, fileId));
 

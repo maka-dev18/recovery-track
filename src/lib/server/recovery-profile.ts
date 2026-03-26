@@ -39,6 +39,146 @@ function extractText(signalValueJson: string): string {
 	return '';
 }
 
+function extractStructuredFields(signalValueJson: string) {
+	try {
+		const parsed = JSON.parse(signalValueJson) as {
+			summary?: unknown;
+			label?: unknown;
+			note?: unknown;
+			row?: Record<string, unknown>;
+		};
+
+		return {
+			summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
+			label: typeof parsed.label === 'string' ? parsed.label.trim() : '',
+			note: typeof parsed.note === 'string' ? parsed.note.trim() : '',
+			row: parsed.row && typeof parsed.row === 'object' ? parsed.row : null
+		};
+	} catch {
+		return {
+			summary: '',
+			label: '',
+			note: '',
+			row: null
+		};
+	}
+}
+
+function parseDelimitedTextList(value: unknown) {
+	if (Array.isArray(value)) {
+		return value
+			.filter((entry): entry is string => typeof entry === 'string')
+			.map((entry) => entry.trim())
+			.filter(Boolean);
+	}
+
+	if (typeof value !== 'string') {
+		return [];
+	}
+
+	return value
+		.split(/[\n,;|]+/)
+		.map((entry) => entry.trim())
+		.filter(Boolean);
+}
+
+function getRowFields(row: Record<string, unknown> | null, keys: string[]) {
+	if (!row) {
+		return [];
+	}
+
+	const values: unknown[] = [];
+	for (const key of keys) {
+		const value = row[key];
+		if (value != null && `${value}`.trim() !== '') {
+			values.push(value);
+		}
+	}
+
+	return values;
+}
+
+function collectHistoryInsights(
+	historySignals: Array<{ signalType: string; signalValueJson: string }>
+) {
+	const journeySummaries: string[] = [];
+	const triggerCandidates = new Set<string>();
+	const patternCandidates = new Set<string>();
+	const protectiveCandidates = new Set<string>();
+
+	for (const signal of historySignals) {
+		const fields = extractStructuredFields(signal.signalValueJson);
+		const primaryText = fields.summary || fields.label || fields.note;
+
+		if (signal.signalType === 'history_summary' && fields.summary) {
+			journeySummaries.push(fields.summary);
+		}
+
+		if (signal.signalType === 'rehab_journey' && fields.summary) {
+			journeySummaries.push(fields.summary);
+		}
+
+		if (signal.signalType === 'relapse_trigger') {
+			if (fields.label) triggerCandidates.add(fields.label);
+			if (fields.summary) triggerCandidates.add(fields.summary);
+		}
+
+		if (signal.signalType === 'return_pattern') {
+			if (fields.summary) patternCandidates.add(fields.summary);
+			if (fields.label) patternCandidates.add(fields.label);
+		}
+
+		if (signal.signalType === 'protective_factor') {
+			if (fields.label) protectiveCandidates.add(fields.label);
+			if (fields.summary) protectiveCandidates.add(fields.summary);
+		}
+
+		if (signal.signalType === 'warning_signal') {
+			if (primaryText && triggerCandidates.size < 6) {
+				triggerCandidates.add(primaryText);
+			}
+
+			if (fields.note && patternCandidates.size < 5) {
+				patternCandidates.add(fields.note);
+			}
+		}
+
+		if (signal.signalType === 'historical_record') {
+			for (const value of getRowFields(fields.row, ['trigger', 'triggers', 'stressor', 'stressors', 'risk_trigger'])) {
+				for (const trigger of parseDelimitedTextList(value)) {
+					triggerCandidates.add(trigger);
+				}
+			}
+
+			for (const value of getRowFields(fields.row, ['pattern', 'relapse_pattern', 'return_pattern', 'warning_pattern'])) {
+				for (const pattern of parseDelimitedTextList(value)) {
+					patternCandidates.add(pattern);
+				}
+			}
+
+			for (const value of getRowFields(fields.row, [
+				'protective_factor',
+				'protective_factors',
+				'coping_tool',
+				'coping_tools',
+				'support',
+				'supports'
+			])) {
+				for (const protective of parseDelimitedTextList(value)) {
+					protectiveCandidates.add(protective);
+				}
+			}
+		}
+	}
+
+	return {
+		journeySummary: journeySummaries.find(Boolean) ?? '',
+		triggers: [...triggerCandidates].slice(0, 6),
+		returnPatterns: [...patternCandidates].slice(0, 5),
+		protectiveFactors: [...protectiveCandidates].slice(0, 6)
+	};
+}
+
 function deriveRecoveryStage(averageWeight: number, latestRiskTier: string | null) {
 	if (latestRiskTier === 'critical' || latestRiskTier === 'high' || averageWeight >= 65) {
 		return 'high_support';
@@ -99,6 +239,32 @@ function summarizeSupportPreferences(raw: string | null | undefined) {
 	}
 }
 
+export type PatientHistoryInsightSnapshot = {
+	journeySummary: string;
+	triggers: string[];
+	returnPatterns: string[];
+	protectiveFactors: string[];
+};
+
+export type PatientPersonalizationSnapshot = {
+	patientName: string | null;
+	preferredName: string | null;
+	recoveryStage: string;
+	baselineRiskLevel: string | null;
+	goals: string[];
+	supportPreferences: string[];
+	currentRisk: {
+		tier: string;
+		score: number;
+	} | null;
+	historySignalsSummary: string;
+	journeySummary: string;
+	triggers: string[];
+	returnPatterns: string[];
+	protectiveFactors: string[];
+	uploadedHistoryNotes: string;
+};
+
 export async function syncPatientRecoveryProfile(patientId: string) {
 	const [historySignals, latestRisk] = await Promise.all([
 		db.query.patientHistorySignal.findMany({
@@ -149,7 +315,9 @@ export async function syncPatientRecoveryProfile(patientId: string) {
 		});
 }
 
-export async function getPatientPersonalizationContext(patientId: string) {
+export async function getPatientPersonalizationSnapshot(
+	patientId: string
+): Promise<PatientPersonalizationSnapshot> {
 	const [profile, historySignals, latestRisk, patientRecord] = await Promise.all([
 		db.query.patientRecoveryProfile.findFirst({
 			where: eq(patientRecoveryProfile.patientId, patientId)
@@ -176,6 +344,7 @@ export async function getPatientPersonalizationContext(patientId: string) {
 		.filter(Boolean)
 		.slice(0, 4)
 		.join(' | ');
+	const historyInsights = collectHistoryInsights(historySignals);
 
 	let goalSummary = '';
 	if (profile?.primaryGoalsJson) {
@@ -192,17 +361,74 @@ export async function getPatientPersonalizationContext(patientId: string) {
 	const supportSummary = summarizeSupportPreferences(profile?.supportPreferencesJson ?? null);
 	const preferredName = patientRecord?.name ? getPreferredName(patientRecord.name) : null;
 	const profileNotes = profile?.notes?.trim().slice(0, 240) ?? '';
+	const journeySummary = historyInsights.journeySummary || profileNotes;
+	const protectiveFactors =
+		historyInsights.protectiveFactors.length > 0
+			? historyInsights.protectiveFactors
+			: [...new Set([supportSummary, ...goalSummary.split(',').map((entry) => entry.trim()).filter(Boolean)])];
+	const supportPreferences = supportSummary
+		? supportSummary
+				.split(',')
+				.map((entry) => entry.trim())
+				.filter(Boolean)
+		: [];
+
+	return {
+		patientName: patientRecord?.name ?? null,
+		preferredName,
+		recoveryStage: profile?.recoveryStage ?? 'active recovery',
+		baselineRiskLevel: profile?.baselineRiskLevel ?? null,
+		goals: goalSummary
+			? goalSummary
+					.split(',')
+					.map((entry) => entry.trim())
+					.filter(Boolean)
+			: [],
+		supportPreferences,
+		currentRisk: latestRisk
+			? {
+					tier: latestRisk.tier,
+					score: latestRisk.score
+				}
+			: null,
+		historySignalsSummary: historySummary,
+		journeySummary,
+		triggers: historyInsights.triggers,
+		returnPatterns: historyInsights.returnPatterns,
+		protectiveFactors,
+		uploadedHistoryNotes: profileNotes
+	};
+}
+
+export async function getPatientPersonalizationContext(patientId: string) {
+	const snapshot = await getPatientPersonalizationSnapshot(patientId);
 
 	return [
-		patientRecord?.name ? `Patient name: ${patientRecord.name}.` : null,
-		preferredName ? `Use ${preferredName} when greeting the patient.` : null,
-		profile ? `Recovery stage: ${profile.recoveryStage}.` : 'Recovery stage: active recovery.',
-		profile?.baselineRiskLevel ? `Baseline risk: ${profile.baselineRiskLevel}.` : null,
-		goalSummary ? `Goals: ${goalSummary}.` : null,
-		supportSummary ? `Support preferences: ${supportSummary}.` : null,
-		latestRisk ? `Current risk tier: ${latestRisk.tier} (${latestRisk.score}).` : null,
-		historySummary ? `History signals: ${historySummary}.` : 'History signals: no parsed baseline details yet.',
-		profileNotes ? `Uploaded history notes: ${profileNotes}.` : null
+		snapshot.patientName ? `Patient name: ${snapshot.patientName}.` : null,
+		snapshot.preferredName ? `Use ${snapshot.preferredName} when greeting the patient.` : null,
+		snapshot.journeySummary ? `Rehabilitation journey summary: ${snapshot.journeySummary}.` : null,
+		`Recovery stage: ${snapshot.recoveryStage}.`,
+		snapshot.baselineRiskLevel ? `Baseline risk: ${snapshot.baselineRiskLevel}.` : null,
+		snapshot.goals.length > 0 ? `Goals: ${snapshot.goals.join(', ')}.` : null,
+		snapshot.triggers.length > 0
+			? `Likely triggers from uploaded history: ${snapshot.triggers.join(', ')}.`
+			: null,
+		snapshot.returnPatterns.length > 0
+			? `Patterns that can lead back to old behavior: ${snapshot.returnPatterns.join(', ')}.`
+			: null,
+		snapshot.protectiveFactors.length > 0
+			? `Protective factors and stabilizers: ${snapshot.protectiveFactors.join(', ')}.`
+			: null,
+		snapshot.supportPreferences.length > 0
+			? `Support preferences: ${snapshot.supportPreferences.join(', ')}.`
+			: null,
+		snapshot.currentRisk
+			? `Current risk tier: ${snapshot.currentRisk.tier} (${snapshot.currentRisk.score}).`
+			: null,
+		snapshot.historySignalsSummary
+			? `History signals: ${snapshot.historySignalsSummary}.`
+			: 'History signals: no parsed baseline details yet.',
+		snapshot.uploadedHistoryNotes ? `Uploaded history notes: ${snapshot.uploadedHistoryNotes}.` : null
 	]
 		.filter(Boolean)
 		.join(' ');
