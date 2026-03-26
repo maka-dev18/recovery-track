@@ -17,7 +17,7 @@ import {
 import { logError } from '$lib/server/utils/log';
 
 const postSchema = z.object({
-	signalType: z.enum(['offer', 'answer', 'ice', 'hangup', 'ready']),
+	signalType: z.enum(['offer', 'answer', 'ice', 'hangup', 'ready', 'reset']),
 	payload: z.record(z.string(), z.unknown()).default({})
 });
 

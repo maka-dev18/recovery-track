@@ -26,6 +26,7 @@
 
 	const isVideoMode = $derived(data.session.mode === 'video');
 	const isInitiator = $derived(data.currentUser.role === 'therapist');
+	type CallSignalType = 'offer' | 'answer' | 'ice' | 'hangup' | 'ready' | 'reset';
 
 	function formatDate(value: string | Date | null) {
 		if (!value) return 'TBD';
@@ -38,17 +39,36 @@
 		}).format(date);
 	}
 
+	async function playMediaElement(element: HTMLMediaElement | null) {
+		if (!element) return;
+
+		try {
+			await element.play();
+		} catch {
+			// Browsers may block autoplay until media becomes active. Retry on the next attachment.
+		}
+	}
+
 	function attachMediaTargets() {
 		if (localVideoEl && localStream) {
 			localVideoEl.srcObject = localStream;
+			void playMediaElement(localVideoEl);
+		} else if (localVideoEl) {
+			localVideoEl.srcObject = null;
 		}
 
-		if (isVideoMode && remoteVideoEl && remoteStream) {
-			remoteVideoEl.srcObject = remoteStream;
+		if (remoteVideoEl) {
+			remoteVideoEl.srcObject = isVideoMode && remoteStream ? remoteStream : null;
+			if (remoteVideoEl.srcObject) {
+				void playMediaElement(remoteVideoEl);
+			}
 		}
 
-		if (!isVideoMode && remoteAudioEl && remoteStream) {
+		if (remoteAudioEl) {
 			remoteAudioEl.srcObject = remoteStream;
+			if (remoteAudioEl.srcObject) {
+				void playMediaElement(remoteAudioEl);
+			}
 		}
 	}
 
@@ -57,7 +77,7 @@
 	});
 
 	async function sendSignal(
-		signalType: 'offer' | 'answer' | 'ice' | 'hangup' | 'ready',
+		signalType: CallSignalType,
 		payload: Record<string, unknown>
 	) {
 		const response = await fetch(`/api/session/${data.session.id}/signals`, {
@@ -73,6 +93,24 @@
 			const payload = await response.json().catch(() => null);
 			throw new Error(payload?.message ?? 'Could not send the session signal.');
 		}
+	}
+
+	function resetPeerConnectionState() {
+		if (peer) {
+			peer.onicecandidate = null;
+			peer.ontrack = null;
+			peer.onconnectionstatechange = null;
+			peer.close();
+		}
+
+		for (const track of remoteStream?.getTracks() ?? []) {
+			track.stop();
+		}
+
+		remoteStream = null;
+		peer = null;
+		pendingIceCandidates = [];
+		attachMediaTargets();
 	}
 
 	async function ensurePeerConnection() {
@@ -103,12 +141,25 @@
 				remoteStream = new MediaStream();
 			}
 
-			for (const track of event.streams[0]?.getTracks?.() ?? event.streams.flatMap((stream) => stream.getTracks())) {
+			const incomingTracks =
+				event.streams.length > 0
+					? event.streams.flatMap((stream) => stream.getTracks())
+					: [event.track];
+
+			for (const track of incomingTracks) {
 				if (!remoteStream.getTracks().some((existing) => existing.id === track.id)) {
 					remoteStream.addTrack(track);
 				}
 			}
+
+			event.track.onunmute = () => {
+				attachMediaTargets();
+			};
+
 			attachMediaTargets();
+			if (remoteStream.getTracks().length > 0) {
+				callState = 'connected';
+			}
 		};
 
 		peer.onconnectionstatechange = () => {
@@ -116,7 +167,13 @@
 			if (peer.connectionState === 'connected') {
 				callState = 'connected';
 			}
-			if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') {
+			if (peer.connectionState === 'connecting' || peer.connectionState === 'new') {
+				callState = 'connecting';
+			}
+			if (peer.connectionState === 'disconnected' && joined) {
+				callState = 'connecting';
+			}
+			if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
 				callState = 'ended';
 			}
 		};
@@ -148,7 +205,15 @@
 	}) {
 		signalCursor = signal.createdAt;
 
-		if (!joined && signal.signalType !== 'ready') {
+		if (!joined && signal.signalType !== 'ready' && signal.signalType !== 'reset') {
+			return;
+		}
+
+		if (signal.signalType === 'reset') {
+			resetPeerConnectionState();
+			if (joined) {
+				callState = 'connecting';
+			}
 			return;
 		}
 
@@ -268,6 +333,13 @@
 
 			joined = true;
 			callState = 'connecting';
+
+			if (isInitiator) {
+				await sendSignal('reset', {
+					role: data.currentUser.role
+				});
+			}
+
 			await ensurePeerConnection();
 			startPolling();
 			await sendSignal('ready', {
@@ -379,6 +451,12 @@
 						<div class="bg-slate-950 flex aspect-video items-center justify-center overflow-hidden rounded-xl">
 							{#if isVideoMode}
 								<video bind:this={remoteVideoEl} autoplay playsinline class="h-full w-full object-cover"></video>
+								<audio
+									bind:this={remoteAudioEl}
+									autoplay
+									playsinline
+									class="sr-only"
+								></audio>
 							{:else}
 								<div class="text-center text-sm text-slate-300">
 									Waiting for remote audio

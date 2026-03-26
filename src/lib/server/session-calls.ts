@@ -34,7 +34,7 @@ export async function getAccessibleTherapySession(sessionId: string, userId: str
 export async function appendSessionSignal(args: {
 	sessionId: string;
 	senderUserId: string;
-	signalType: 'offer' | 'answer' | 'ice' | 'hangup' | 'ready';
+	signalType: 'offer' | 'answer' | 'ice' | 'hangup' | 'ready' | 'reset';
 	payload: Record<string, unknown>;
 }) {
 	const signalId = crypto.randomUUID();
@@ -61,7 +61,10 @@ export async function listSessionSignals(args: {
 		orderBy: (table, { asc }) => [asc(table.createdAt)]
 	});
 
-	return signals
+	const latestResetIndex = signals.findLastIndex((signal) => signal.signalType === 'reset');
+	const activeSignals = latestResetIndex >= 0 ? signals.slice(latestResetIndex) : signals;
+
+	return activeSignals
 		.filter((signal) => !args.excludeUserId || signal.senderUserId !== args.excludeUserId)
 		.map((signal) => ({
 			id: signal.id,
