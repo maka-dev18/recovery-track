@@ -300,7 +300,6 @@
 	<section class="rounded-lg border bg-white p-4 shadow-sm md:p-5">
 		<div class="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
 			<div class="space-y-1">
-				<p class="text-muted-foreground text-sm">Associate workspace</p>
 				<h1 class="text-2xl font-semibold">Support updates</h1>
 			</div>
 			<div class="grid gap-2 sm:grid-cols-3 lg:min-w-[28rem]">
@@ -326,9 +325,6 @@
 			<Card.Header>
 				<Badge class="w-fit bg-blue-100 text-blue-700 hover:bg-blue-100">Associate</Badge>
 				<Card.Title>Submit observation</Card.Title>
-				<Card.Description>
-					Log what you are noticing so the therapist can intervene early.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<form
@@ -409,7 +405,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Overview</Card.Title>
-				<Card.Description>Your current support network coverage.</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-3 text-sm">
 				<div class="flex items-center justify-between rounded-md bg-blue-50 px-3 py-2">
@@ -433,7 +428,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Linked patients</Card.Title>
-				<Card.Description>People you are currently authorized to report on.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -481,7 +475,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Your observation history</Card.Title>
-				<Card.Description>Most recent logs from your account.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -590,7 +583,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Therapist conversations</Card.Title>
-				<Card.Description>Coordinate directly with the human therapist about each patient.</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if data.therapistConversations.length === 0}
@@ -675,9 +667,6 @@
 			<Card.Header>
 				<Badge class="w-fit bg-blue-100 text-blue-700 hover:bg-blue-100">{virtualTherapistProfile.name}</Badge>
 				<Card.Title>AI reporting assistant</Card.Title>
-				<Card.Description>
-					Turn daily habit updates into structured recovery notes before escalation is needed.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if aiError}

@@ -1077,11 +1077,7 @@
 	<section class="rounded-lg border bg-white p-4 shadow-sm md:p-5">
 		<div class="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
 			<div class="space-y-1">
-				<p class="text-muted-foreground text-sm">Recovery workspace</p>
 				<h1 class="text-2xl font-semibold">Hi {getPreferredName(data.patientName)}</h1>
-				<p class="text-muted-foreground max-w-2xl text-sm">
-					Use the navigation below to focus on one recovery task at a time.
-				</p>
 			</div>
 			<div class="grid gap-2 sm:grid-cols-3 lg:min-w-[28rem]">
 				<div class="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2">
@@ -1106,9 +1102,6 @@
 			<Card.Header>
 				<Badge class="w-fit bg-blue-100 text-blue-700 hover:bg-blue-100">Patient</Badge>
 				<Card.Title>Daily recovery check-in</Card.Title>
-				<Card.Description>
-					Submit your current status so your care team can monitor risk and support you quickly.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<form
@@ -1158,7 +1151,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Risk snapshot</Card.Title>
-				<Card.Description>Current status from your latest signals.</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if data.latestRisk}
@@ -1190,7 +1182,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Upcoming care calendar</Card.Title>
-				<Card.Description>Your scheduled follow-ups and live session links.</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-3">
 				{#if data.upcomingSessions.length === 0}
@@ -1259,9 +1250,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Coping recommendations</Card.Title>
-				<Card.Description>
-					Recommendations are adapted to your recent check-ins, history, and risk level.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#each data.copingRecommendations as recommendation (recommendation.toolKey)}
@@ -1316,7 +1304,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Badges and rewards</Card.Title>
-				<Card.Description>Keep your recovery streak visible and rewarding.</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				<div class="rounded-lg bg-blue-600 px-4 py-4 text-white">
@@ -1353,9 +1340,6 @@
 			<Card.Header>
 				<Badge class="w-fit bg-blue-100 text-blue-700 hover:bg-blue-100">{virtualTherapistProfile.name}</Badge>
 				<Card.Title>Therapy chat</Card.Title>
-				<Card.Description>
-					Confidential conversation with {virtualTherapistProfile.name}, guided by your recovery history and risk-aware escalation monitoring.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if !data.aiFeatures.chatEnabled}
@@ -1427,9 +1411,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Live voice with {virtualTherapistProfile.name}</Card.Title>
-				<Card.Description>
-					Speak naturally with {virtualTherapistProfile.name}. Responses are personalized from your recovery history and transcript events are monitored for high-risk signals in real time.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				<div class="flex items-center gap-2">
@@ -1515,9 +1496,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Message your therapist</Card.Title>
-				<Card.Description>
-					Send non-urgent updates to your assigned therapist directly from the dashboard.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if data.therapistConversations.length === 0}
@@ -1597,9 +1575,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Clinical signal log</Card.Title>
-				<Card.Description>
-					The care system keeps structured notes about important recovery signals across chats, sessions, and observations.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-3">
 				{#if data.recentSignals.length === 0}
@@ -1633,9 +1608,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Need immediate support?</Card.Title>
-				<Card.Description>
-					This sends a critical alert to your therapist team for fast human follow-up.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<form
@@ -1672,7 +1644,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Recent alerts</Card.Title>
-				<Card.Description>Status updates from your latest escalations.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -1712,7 +1683,6 @@
 	<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 		<Card.Header>
 			<Card.Title>Check-in history</Card.Title>
-			<Card.Description>Your latest self-reported signals.</Card.Description>
 		</Card.Header>
 		<Card.Content>
 			<div class="overflow-x-auto">

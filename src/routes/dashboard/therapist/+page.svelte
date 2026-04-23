@@ -409,11 +409,7 @@
 	<section class="rounded-lg border bg-white p-4 shadow-sm md:p-5">
 		<div class="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
 			<div class="space-y-1">
-				<p class="text-muted-foreground text-sm">Therapist workspace</p>
 				<h1 class="text-2xl font-semibold">Care team dashboard</h1>
-				<p class="text-muted-foreground max-w-2xl text-sm">
-					Navigate by work type so reports, patient follow-ups, and care messages stay separated.
-				</p>
 			</div>
 			<div class="grid gap-2 sm:grid-cols-3 lg:min-w-[28rem]">
 				<div class="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2">
@@ -436,20 +432,20 @@
 	<section class="grid gap-4 sm:grid-cols-3">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Assigned patients</Card.Description>
-				<Card.Title class="text-3xl">{data.caseload.length}</Card.Title>
+				<Card.Title class="text-sm font-medium">Assigned patients</Card.Title>
+				<p class="text-3xl font-semibold">{data.caseload.length}</p>
 			</Card.Header>
 		</Card.Root>
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Open alerts</Card.Description>
-				<Card.Title class="text-3xl">{data.openAlerts.length}</Card.Title>
+				<Card.Title class="text-sm font-medium">Open alerts</Card.Title>
+				<p class="text-3xl font-semibold">{data.openAlerts.length}</p>
 			</Card.Header>
 		</Card.Root>
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Recent activity</Card.Description>
-				<Card.Title class="text-3xl">{data.recentCheckins.length + data.recentObservations.length}</Card.Title>
+				<Card.Title class="text-sm font-medium">Recent activity</Card.Title>
+				<p class="text-3xl font-semibold">{data.recentCheckins.length + data.recentObservations.length}</p>
 			</Card.Header>
 		</Card.Root>
 	</section>
@@ -457,16 +453,16 @@
 	<section class="grid gap-4 sm:grid-cols-3">
 		<Card.Root class="border-amber-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Flagged 7-day relapse predictions</Card.Description>
-				<Card.Title class="text-3xl">{flaggedPredictionCount}</Card.Title>
+				<Card.Title class="text-sm font-medium">Flagged 7-day relapse predictions</Card.Title>
+				<p class="text-3xl font-semibold">{flaggedPredictionCount}</p>
 			</Card.Header>
 		</Card.Root>
 		<Card.Root class="border-amber-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Highest likelihood</Card.Description>
-				<Card.Title class="text-3xl">
+				<Card.Title class="text-sm font-medium">Highest likelihood</Card.Title>
+				<p class="text-3xl font-semibold">
 					{highestRelapsePrediction ? `${highestRelapsePrediction.likelihoodPercent}%` : '—'}
-				</Card.Title>
+				</p>
 				{#if highestRelapsePrediction}
 					<p class="text-muted-foreground text-xs">{highestRelapsePrediction.patientName}</p>
 				{/if}
@@ -474,8 +470,8 @@
 		</Card.Root>
 		<Card.Root class="border-amber-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Rising predictions</Card.Description>
-				<Card.Title class="text-3xl">{risingPredictionCount}</Card.Title>
+				<Card.Title class="text-sm font-medium">Rising predictions</Card.Title>
+				<p class="text-3xl font-semibold">{risingPredictionCount}</p>
 			</Card.Header>
 		</Card.Root>
 	</section>
@@ -484,9 +480,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>7-day relapse watchlist</Card.Title>
-				<Card.Description>
-					Deterministic prediction using check-ins, associate reports, therapist data, history, and current risk signals.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-3">
 				{#if data.relapseWatchlist.length === 0}
@@ -538,9 +531,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Therapist reports</Card.Title>
-				<Card.Description>
-					Summary graphs and relapse-pattern context across each patient’s post-rehab recovery data.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-6">
 				{#if data.patientReports.length === 0}
@@ -770,9 +760,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Calendar and follow-ups</Card.Title>
-				<Card.Description>
-					High relapse likelihood creates a video call at your next open slot; critical likelihood creates an in-person appointment. You can reschedule either.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if data.upcomingSessions.length === 0}
@@ -865,9 +852,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Clinical signal feed</Card.Title>
-				<Card.Description>
-					Analyzed signals from patient AI chat, therapist messaging, associate updates, and therapy sessions.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-3">
 				{#if data.recentSignals.length === 0}
@@ -901,7 +885,6 @@
 			<Card.Header>
 				<Badge class="w-fit bg-blue-100 text-blue-700 hover:bg-blue-100">Therapist</Badge>
 				<Card.Title>Assigned caseload</Card.Title>
-				<Card.Description>Patients currently assigned to your workspace.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -964,7 +947,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Alert queue</Card.Title>
-				<Card.Description>Acknowledge and resolve active high-risk events.</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if data.openAlerts.length === 0}
@@ -1048,9 +1030,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Therapist-patient messaging</Card.Title>
-				<Card.Description>
-					Asynchronous care-team communication scoped to your assigned caseload.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if data.chatConversations.length === 0}
@@ -1129,9 +1108,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Create session note</Card.Title>
-				<Card.Description>
-					Capture a concise structured note after each patient session.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<form
@@ -1277,9 +1253,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Therapist-associate messaging</Card.Title>
-				<Card.Description>
-					Coordinate directly with associates about behavior, daily habits, diet, attendance, and warning signs.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if data.associateConversations.length === 0}
@@ -1365,9 +1338,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Recent therapy notes</Card.Title>
-				<Card.Description>
-					Update recent session documentation without leaving the dashboard.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if data.therapySessions.length === 0}
@@ -1531,7 +1501,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Recent check-ins</Card.Title>
-				<Card.Description>Latest self-reported updates from your caseload.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -1575,7 +1544,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Recent associate logs</Card.Title>
-				<Card.Description>Family/support-network updates tied to your caseload.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">

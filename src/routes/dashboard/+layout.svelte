@@ -145,7 +145,6 @@
 				</div>
 				<div class="min-w-0 group-data-[collapsible=icon]:hidden">
 					<p class="truncate text-sm font-semibold">Recovery Track</p>
-					<p class="text-muted-foreground truncate text-xs">Care coordination</p>
 				</div>
 			</div>
 		</Sidebar.Header>
@@ -245,7 +244,6 @@
 					<Separator orientation="vertical" class="h-6" />
 					<div class="space-y-0.5">
 						<p class="text-sm font-semibold">{currentNavigationTitle()}</p>
-						<p class="text-muted-foreground text-xs">{ROLE_LABEL[data.user.role]} workspace</p>
 					</div>
 				</div>
 				<div class="flex items-center gap-2">
@@ -274,9 +272,6 @@
 								<div class="flex items-center justify-between gap-3">
 									<div>
 										<p class="text-sm font-semibold">Reminders</p>
-										<p class="text-muted-foreground text-xs">
-											Scheduled calls and in-person sessions
-										</p>
 									</div>
 									{#if data.unreadNotificationCount > 0}
 										<button

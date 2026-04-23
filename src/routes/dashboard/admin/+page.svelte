@@ -247,11 +247,7 @@
 	<section class="rounded-lg border bg-white p-4 shadow-sm md:p-5">
 		<div class="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
 			<div class="space-y-1">
-				<p class="text-muted-foreground text-sm">Admin workspace</p>
 				<h1 class="text-2xl font-semibold">Platform operations</h1>
-				<p class="text-muted-foreground max-w-2xl text-sm">
-					Use the navigation below to separate account setup, history ingestion, outreach, and directories.
-				</p>
 			</div>
 			<div class="grid gap-2 sm:grid-cols-3 lg:min-w-[28rem]">
 				<div class="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2">
@@ -274,37 +270,32 @@
 	<section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Total users</Card.Description>
-				<Card.Title class="text-3xl">{data.stats.totalUsers}</Card.Title
-				>
+				<Card.Title class="text-sm font-medium">Total users</Card.Title>
+				<p class="text-3xl font-semibold">{data.stats.totalUsers}</p>
 			</Card.Header>
 		</Card.Root>
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Therapists</Card.Description>
-				<Card.Title class="text-3xl">{data.stats.therapists}</Card.Title
-				>
+				<Card.Title class="text-sm font-medium">Therapists</Card.Title>
+				<p class="text-3xl font-semibold">{data.stats.therapists}</p>
 			</Card.Header>
 		</Card.Root>
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Patients</Card.Description>
-				<Card.Title class="text-3xl">{data.stats.patients}</Card.Title>
+				<Card.Title class="text-sm font-medium">Patients</Card.Title>
+				<p class="text-3xl font-semibold">{data.stats.patients}</p>
 			</Card.Header>
 		</Card.Root>
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Associates</Card.Description>
-				<Card.Title class="text-3xl">{data.stats.associates}</Card.Title
-				>
+				<Card.Title class="text-sm font-medium">Associates</Card.Title>
+				<p class="text-3xl font-semibold">{data.stats.associates}</p>
 			</Card.Header>
 		</Card.Root>
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
-				<Card.Description>Forced resets</Card.Description>
-				<Card.Title class="text-3xl"
-					>{data.stats.forcedPasswordResets}</Card.Title
-				>
+				<Card.Title class="text-sm font-medium">Forced resets</Card.Title>
+				<p class="text-3xl font-semibold">{data.stats.forcedPasswordResets}</p>
 			</Card.Header>
 		</Card.Root>
 	</section>
@@ -314,10 +305,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Create platform user</Card.Title>
-				<Card.Description>
-					Create admins, therapists, patients, and associates with
-					default credentials.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<form
@@ -396,9 +383,6 @@
 			<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 				<Card.Header>
 					<Card.Title>Assign therapist to patient</Card.Title>
-					<Card.Description
-						>Map therapist caseloads for dashboard visibility.</Card.Description
-					>
 				</Card.Header>
 				<Card.Content>
 					<form
@@ -417,9 +401,7 @@
 							>
 								<option value="">Select therapist</option>
 								{#each data.therapists as therapist (therapist.id)}
-									<option value={therapist.id}
-										>{therapist.name} ({therapist.email})</option
-									>
+									<option value={therapist.id}>{therapist.name} ({therapist.email})</option>
 								{/each}
 							</select>
 						</div>
@@ -433,9 +415,7 @@
 							>
 								<option value="">Select patient</option>
 								{#each data.patients as patient (patient.id)}
-									<option value={patient.id}
-										>{patient.name} ({patient.email})</option
-									>
+									<option value={patient.id}>{patient.name} ({patient.email})</option>
 								{/each}
 							</select>
 						</div>
@@ -459,9 +439,6 @@
 			<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 				<Card.Header>
 					<Card.Title>Link associate to patient</Card.Title>
-					<Card.Description
-						>Capture family and support-network relationships.</Card.Description
-					>
 				</Card.Header>
 				<Card.Content>
 					<form
@@ -480,9 +457,7 @@
 							>
 								<option value="">Select associate</option>
 								{#each data.associates as associate (associate.id)}
-									<option value={associate.id}
-										>{associate.name} ({associate.email})</option
-									>
+									<option value={associate.id}>{associate.name} ({associate.email})</option>
 								{/each}
 							</select>
 						</div>
@@ -496,16 +471,12 @@
 							>
 								<option value="">Select patient</option>
 								{#each data.patients as patient (patient.id)}
-									<option value={patient.id}
-										>{patient.name} ({patient.email})</option
-									>
+									<option value={patient.id}>{patient.name} ({patient.email})</option>
 								{/each}
 							</select>
 						</div>
 						<div class="grid gap-2">
-							<Label for="relationshipLabel"
-								>Relationship label</Label
-							>
+							<Label for="relationshipLabel">Relationship label</Label>
 							<Input
 								id="relationshipLabel"
 								name="relationshipLabel"
@@ -536,9 +507,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Historical rehab uploads</Card.Title>
-				<Card.Description>
-					Upload prior rehab PDFs/CSVs so AI scoring can use baseline history.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if !data.aiFeatures.historyIngestEnabled}
@@ -568,7 +536,6 @@
 							<option value={patient.id}>{patient.name} ({patient.email})</option>
 						{/each}
 					</select>
-					<p class="text-muted-foreground text-xs">Only patient records are eligible for historical rehab ingestion.</p>
 				</div>
 				<div class="grid gap-2">
 					<Label for="history-file">Rehab file (PDF/CSV)</Label>
@@ -583,7 +550,6 @@
 							historyFile = target.files?.[0] ?? null;
 						}}
 					/>
-					<p class="text-muted-foreground text-xs">Max file size is enforced by backend policy before upload.</p>
 				</div>
 				<Button
 					type="button"
@@ -604,7 +570,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Parser queue</Card.Title>
-				<Card.Description>Latest background jobs for file parsing and retries.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -664,7 +629,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>History extraction runs</Card.Title>
-				<Card.Description>Click a run to inspect Gemini extraction results and stored signals.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -748,7 +712,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Extracted data</Card.Title>
-				<Card.Description>Structured data stored from the selected history run.</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if !selectedHistoryFile}
@@ -795,9 +758,7 @@
 									<div class="rounded-md border border-blue-100 bg-white p-3 text-sm">
 										<div class="flex items-center justify-between gap-3">
 											<Badge variant="outline">{signal.signalType.replaceAll("_", " ")}</Badge>
-											<span class="text-muted-foreground text-xs">
-												Confidence {signal.confidence}
-											</span>
+											<span class="text-muted-foreground text-xs">Confidence {signal.confidence}</span>
 										</div>
 										<p class="mt-2 text-sm">{summarizeSignal(signal.signalValueJson)}</p>
 										<p class="text-muted-foreground mt-1 text-xs">
@@ -818,15 +779,10 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Inactive patients</Card.Title>
-				<Card.Description>
-					Patients who have not logged in recently, with quick outreach options for admins.
-				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
 				{#if data.inactivePatients.length === 0}
-					<p class="text-muted-foreground text-sm">
-						No patient inactivity alerts are active right now.
-					</p>
+					<p class="text-muted-foreground text-sm">No patient inactivity alerts are active right now.</p>
 				{:else}
 					{#each data.inactivePatients as patient (patient.patientId)}
 						<div class="space-y-3 rounded-lg border border-blue-100 bg-blue-50/50 p-4">
@@ -848,11 +804,7 @@
 								</p>
 							{/if}
 							<div class="grid gap-2 md:grid-cols-2">
-								<form
-									method="POST"
-									action="?/logOutreach"
-									use:pendingForm={`call-patient-${patient.patientId}`}
-								>
+								<form method="POST" action="?/logOutreach" use:pendingForm={`call-patient-${patient.patientId}`}>
 									<input type="hidden" name="patientId" value={patient.patientId} />
 									<input type="hidden" name="targetUserId" value={patient.patientId} />
 									<input type="hidden" name="channel" value="call_patient" />
@@ -869,11 +821,7 @@
 										{/if}
 									</Button>
 								</form>
-								<form
-									method="POST"
-									action="?/logOutreach"
-									use:pendingForm={`email-patient-${patient.patientId}`}
-								>
+								<form method="POST" action="?/logOutreach" use:pendingForm={`email-patient-${patient.patientId}`}>
 									<input type="hidden" name="patientId" value={patient.patientId} />
 									<input type="hidden" name="targetUserId" value={patient.patientId} />
 									<input type="hidden" name="channel" value="email_patient" />
@@ -900,11 +848,7 @@
 												<p class="text-sm">{associate.name}</p>
 												<p class="text-muted-foreground text-xs">{associate.email}</p>
 											</div>
-											<form
-												method="POST"
-												action="?/logOutreach"
-												use:pendingForm={`call-associate-${patient.patientId}-${associate.id}`}
-											>
+											<form method="POST" action="?/logOutreach" use:pendingForm={`call-associate-${patient.patientId}-${associate.id}`}>
 												<input type="hidden" name="patientId" value={patient.patientId} />
 												<input type="hidden" name="associateId" value={associate.id} />
 												<input type="hidden" name="targetUserId" value={associate.id} />
@@ -922,11 +866,7 @@
 													{/if}
 												</Button>
 											</form>
-											<form
-												method="POST"
-												action="?/logOutreach"
-												use:pendingForm={`email-associate-${patient.patientId}-${associate.id}`}
-											>
+											<form method="POST" action="?/logOutreach" use:pendingForm={`email-associate-${patient.patientId}-${associate.id}`}>
 												<input type="hidden" name="patientId" value={patient.patientId} />
 												<input type="hidden" name="associateId" value={associate.id} />
 												<input type="hidden" name="targetUserId" value={associate.id} />
@@ -962,7 +902,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Outreach history</Card.Title>
-				<Card.Description>Recent admin follow-up actions for inactive patients.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -1006,9 +945,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>User directory</Card.Title>
-				<Card.Description
-					>All provisioned users and role metadata.</Card.Description
-				>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -1025,27 +961,16 @@
 						<Table.Body>
 							{#each data.users as managedUser (managedUser.id)}
 								<Table.Row>
-									<Table.Cell class="font-medium"
-										>{managedUser.name}</Table.Cell
-									>
+									<Table.Cell class="font-medium">{managedUser.name}</Table.Cell>
 									<Table.Cell>{managedUser.email}</Table.Cell>
 									<Table.Cell>
-										<Badge
-											class="bg-blue-100 text-blue-700 hover:bg-blue-100"
-											>{managedUser.role}</Badge
-										>
+										<Badge class="bg-blue-100 text-blue-700 hover:bg-blue-100">{managedUser.role}</Badge>
 									</Table.Cell>
 									<Table.Cell>
 										{#if managedUser.mustChangePassword}
-											<Badge
-												variant="outline"
-												class="border-blue-300 text-blue-700"
-												>Change required</Badge
-											>
+											<Badge variant="outline" class="border-blue-300 text-blue-700">Change required</Badge>
 										{:else}
-											<Badge variant="secondary"
-												>Up to date</Badge
-											>
+											<Badge variant="secondary">Up to date</Badge>
 										{/if}
 									</Table.Cell>
 									<Table.Cell>
@@ -1056,44 +981,29 @@
 												class="grid gap-2 md:grid-cols-[1fr_170px_auto]"
 												use:pendingForm={`update-user-${managedUser.id}`}
 											>
-												<input
-													type="hidden"
-													name="userId"
-													value={managedUser.id}
-												/>
-												<Input
-													name="name"
-													value={managedUser.name}
-													required
-												/>
+												<input type="hidden" name="userId" value={managedUser.id} />
+												<Input name="name" value={managedUser.name} required />
 												<select
 													name="role"
 													value={managedUser.role}
 													class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-2"
 												>
 													{#each data.roles as role (role)}
-														<option value={role}
-															>{role}</option
-														>
+														<option value={role}>{role}</option>
 													{/each}
 												</select>
 												<Button
 													type="submit"
 													variant="outline"
-													disabled={activeAction ===
-														`update-user-${managedUser.id}`}
+													disabled={activeAction === `update-user-${managedUser.id}`}
 												>
 													{#if activeAction === `update-user-${managedUser.id}`}
-														<LoaderCircleIcon
-															class="size-4 animate-spin"
-														/>
+														<LoaderCircleIcon class="size-4 animate-spin" />
 													{:else}
 														Save
 													{/if}
 												</Button>
-												<label
-													class="text-muted-foreground flex items-center gap-2 text-xs md:col-span-3"
-												>
+												<label class="text-muted-foreground flex items-center gap-2 text-xs md:col-span-3">
 													<input
 														type="checkbox"
 														name="forcePasswordChange"
@@ -1109,11 +1019,7 @@
 												class="grid gap-2 md:grid-cols-[1fr_auto]"
 												use:pendingForm={`reset-password-${managedUser.id}`}
 											>
-												<input
-													type="hidden"
-													name="userId"
-													value={managedUser.id}
-												/>
+												<input type="hidden" name="userId" value={managedUser.id} />
 												<Input
 													name="newPassword"
 													type="password"
@@ -1125,20 +1031,15 @@
 													type="submit"
 													variant="outline"
 													class="border-blue-200 text-blue-700 hover:bg-blue-50"
-													disabled={activeAction ===
-														`reset-password-${managedUser.id}`}
+													disabled={activeAction === `reset-password-${managedUser.id}`}
 												>
 													{#if activeAction === `reset-password-${managedUser.id}`}
-														<LoaderCircleIcon
-															class="size-4 animate-spin"
-														/>
+														<LoaderCircleIcon class="size-4 animate-spin" />
 													{:else}
 														Reset
 													{/if}
 												</Button>
-												<label
-													class="text-muted-foreground flex items-center gap-2 text-xs md:col-span-2"
-												>
+												<label class="text-muted-foreground flex items-center gap-2 text-xs md:col-span-2">
 													<input
 														type="checkbox"
 														name="forcePasswordChange"
@@ -1153,22 +1054,15 @@
 												action="?/removeUser"
 												use:pendingForm={`remove-user-${managedUser.id}`}
 											>
-												<input
-													type="hidden"
-													name="userId"
-													value={managedUser.id}
-												/>
+												<input type="hidden" name="userId" value={managedUser.id} />
 												<Button
 													type="submit"
 													variant="ghost"
 													class="text-destructive hover:text-destructive"
-													disabled={activeAction ===
-														`remove-user-${managedUser.id}`}
+													disabled={activeAction === `remove-user-${managedUser.id}`}
 												>
 													{#if activeAction === `remove-user-${managedUser.id}`}
-														<LoaderCircleIcon
-															class="size-4 animate-spin"
-														/>
+														<LoaderCircleIcon class="size-4 animate-spin" />
 														Removing...
 													{:else}
 														Remove user
@@ -1188,9 +1082,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Therapist assignments</Card.Title>
-				<Card.Description
-					>Patients visible to each therapist dashboard.</Card.Description
-				>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -1200,60 +1091,38 @@
 								<Table.Head>Therapist</Table.Head>
 								<Table.Head>Patient</Table.Head>
 								<Table.Head>Assigned by</Table.Head>
-								<Table.Head class="text-right"
-									>Action</Table.Head
-								>
+								<Table.Head class="text-right">Action</Table.Head>
 							</Table.Row>
 						</Table.Header>
 						<Table.Body>
 							{#if data.therapistAssignments.length === 0}
 								<Table.Row>
-									<Table.Cell
-										colspan={4}
-										class="text-muted-foreground py-8 text-center"
-									>
+									<Table.Cell colspan={4} class="text-muted-foreground py-8 text-center">
 										No therapist assignments yet.
 									</Table.Cell>
 								</Table.Row>
 							{:else}
 								{#each data.therapistAssignments as assignment (assignment.therapistId + assignment.patientId)}
 									<Table.Row>
-										<Table.Cell
-											>{assignment.therapistName}</Table.Cell
-										>
-										<Table.Cell
-											>{assignment.patientName}</Table.Cell
-										>
-										<Table.Cell
-											>{assignment.assignedBy}</Table.Cell
-										>
+										<Table.Cell>{assignment.therapistName}</Table.Cell>
+										<Table.Cell>{assignment.patientName}</Table.Cell>
+										<Table.Cell>{assignment.assignedBy}</Table.Cell>
 										<Table.Cell class="text-right">
 											<form
 												method="POST"
 												action="?/removeTherapistAssignment"
 												use:pendingForm={`remove-therapist-${assignment.therapistId}-${assignment.patientId}`}
 											>
-												<input
-													type="hidden"
-													name="therapistId"
-													value={assignment.therapistId}
-												/>
-												<input
-													type="hidden"
-													name="patientId"
-													value={assignment.patientId}
-												/>
+												<input type="hidden" name="therapistId" value={assignment.therapistId} />
+												<input type="hidden" name="patientId" value={assignment.patientId} />
 												<Button
 													type="submit"
 													variant="ghost"
 													class="text-destructive hover:text-destructive"
-													disabled={activeAction ===
-														`remove-therapist-${assignment.therapistId}-${assignment.patientId}`}
+													disabled={activeAction === `remove-therapist-${assignment.therapistId}-${assignment.patientId}`}
 												>
 													{#if activeAction === `remove-therapist-${assignment.therapistId}-${assignment.patientId}`}
-														<LoaderCircleIcon
-															class="size-4 animate-spin"
-														/>
+														<LoaderCircleIcon class="size-4 animate-spin" />
 													{:else}
 														Remove
 													{/if}
@@ -1272,9 +1141,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Associate links</Card.Title>
-				<Card.Description
-					>Support network visibility for each patient.</Card.Description
-				>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -1285,30 +1151,21 @@
 								<Table.Head>Patient</Table.Head>
 								<Table.Head>Relationship</Table.Head>
 								<Table.Head>Assigned by</Table.Head>
-								<Table.Head class="text-right"
-									>Action</Table.Head
-								>
+								<Table.Head class="text-right">Action</Table.Head>
 							</Table.Row>
 						</Table.Header>
 						<Table.Body>
 							{#if data.associateAssignments.length === 0}
 								<Table.Row>
-									<Table.Cell
-										colspan={5}
-										class="text-muted-foreground py-8 text-center"
-									>
+									<Table.Cell colspan={5} class="text-muted-foreground py-8 text-center">
 										No associate links yet.
 									</Table.Cell>
 								</Table.Row>
 							{:else}
 								{#each data.associateAssignments as assignment (assignment.associateId + assignment.patientId)}
 									<Table.Row>
-										<Table.Cell
-											>{assignment.associateName}</Table.Cell
-										>
-										<Table.Cell
-											>{assignment.patientName}</Table.Cell
-										>
+										<Table.Cell>{assignment.associateName}</Table.Cell>
+										<Table.Cell>{assignment.patientName}</Table.Cell>
 										<Table.Cell>
 											<form
 												method="POST"
@@ -1316,16 +1173,8 @@
 												class="flex items-center gap-2"
 												use:pendingForm={`update-associate-${assignment.associateId}-${assignment.patientId}`}
 											>
-												<input
-													type="hidden"
-													name="associateId"
-													value={assignment.associateId}
-												/>
-												<input
-													type="hidden"
-													name="patientId"
-													value={assignment.patientId}
-												/>
+												<input type="hidden" name="associateId" value={assignment.associateId} />
+												<input type="hidden" name="patientId" value={assignment.patientId} />
 												<Input
 													name="relationshipLabel"
 													value={assignment.relationshipLabel}
@@ -1336,49 +1185,33 @@
 													type="submit"
 													variant="outline"
 													size="sm"
-													disabled={activeAction ===
-														`update-associate-${assignment.associateId}-${assignment.patientId}`}
+													disabled={activeAction === `update-associate-${assignment.associateId}-${assignment.patientId}`}
 												>
 													{#if activeAction === `update-associate-${assignment.associateId}-${assignment.patientId}`}
-														<LoaderCircleIcon
-															class="size-4 animate-spin"
-														/>
+														<LoaderCircleIcon class="size-4 animate-spin" />
 													{:else}
 														Save
 													{/if}
 												</Button>
 											</form>
 										</Table.Cell>
-										<Table.Cell
-											>{assignment.assignedBy}</Table.Cell
-										>
+										<Table.Cell>{assignment.assignedBy}</Table.Cell>
 										<Table.Cell class="text-right">
 											<form
 												method="POST"
 												action="?/removeAssociateAssignment"
 												use:pendingForm={`remove-associate-${assignment.associateId}-${assignment.patientId}`}
 											>
-												<input
-													type="hidden"
-													name="associateId"
-													value={assignment.associateId}
-												/>
-												<input
-													type="hidden"
-													name="patientId"
-													value={assignment.patientId}
-												/>
+												<input type="hidden" name="associateId" value={assignment.associateId} />
+												<input type="hidden" name="patientId" value={assignment.patientId} />
 												<Button
 													type="submit"
 													variant="ghost"
 													class="text-destructive hover:text-destructive"
-													disabled={activeAction ===
-														`remove-associate-${assignment.associateId}-${assignment.patientId}`}
+													disabled={activeAction === `remove-associate-${assignment.associateId}-${assignment.patientId}`}
 												>
 													{#if activeAction === `remove-associate-${assignment.associateId}-${assignment.patientId}`}
-														<LoaderCircleIcon
-															class="size-4 animate-spin"
-														/>
+														<LoaderCircleIcon class="size-4 animate-spin" />
 													{:else}
 														Remove
 													{/if}
@@ -1397,7 +1230,6 @@
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Historical rehab files</Card.Title>
-				<Card.Description>Upload status and parser outcomes for each patient file.</Card.Description>
 			</Card.Header>
 			<Card.Content>
 				<div class="overflow-x-auto">
@@ -1441,9 +1273,7 @@
 										</Table.Cell>
 										<Table.Cell>
 											<div>{formatDate(file.createdAt)}</div>
-											<div class="text-muted-foreground text-xs">
-												Parsed: {formatDate(file.parsedAt)}
-											</div>
+											<div class="text-muted-foreground text-xs">Parsed: {formatDate(file.parsedAt)}</div>
 										</Table.Cell>
 										<Table.Cell class="text-right">
 											<Button
