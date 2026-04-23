@@ -172,6 +172,9 @@ async function loadAdminWorkspace() {
 					id: true,
 					name: true
 				}
+			},
+			signals: {
+				orderBy: (table, { desc }) => [desc(table.createdAt)]
 			}
 		}
 	});
@@ -226,11 +229,30 @@ async function loadAdminWorkspace() {
 				byteSize: entry.byteSize,
 				parseStatus: entry.parseStatus,
 				parseError: entry.parseError,
+				geminiFileName: entry.geminiFileName,
+				geminiFileUri: entry.geminiFileUri,
+				extractionModel: entry.extractionModel,
+				extractionJson: entry.extractionJson,
 				uploadedBy: entry.uploadedByUser?.name ?? 'System',
 				createdAt: entry.createdAt,
-				parsedAt: entry.parsedAt
+				extractedAt: entry.extractedAt,
+				parsedAt: entry.parsedAt,
+				signals: entry.signals.map((signal) => ({
+					id: signal.id,
+					signalType: signal.signalType,
+					signalValueJson: signal.signalValueJson,
+					confidence: signal.confidence,
+					occurredAt: signal.occurredAt,
+					createdAt: signal.createdAt
+				}))
 			})),
-		queueJobs,
+		queueJobs: queueJobs.map((job) => ({
+			...job,
+			fileId:
+				typeof job.payload === 'object' && job.payload !== null && 'fileId' in job.payload
+					? String((job.payload as { fileId?: unknown }).fileId ?? '')
+					: null
+		})),
 		inactivePatients: inactivePatients.map((entry) => ({
 			patientId: entry.patientId,
 			patientName: entry.patientName,

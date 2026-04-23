@@ -4,7 +4,10 @@ import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { deidentifyText } from '$lib/server/ai/deidentify';
 import { summarizeCheckins, summarizeHistorySignals } from '$lib/server/ai-therapist';
-import { buildPatientContextTools } from '$lib/server/ai-therapist-tools';
+import {
+	buildPatientContextEvidenceSummary,
+	buildPatientContextTools
+} from '$lib/server/ai-therapist-tools';
 import { getTextModel } from '$lib/server/ai/provider';
 import { requireRole } from '$lib/server/authz';
 import { aiConfig, isAIFeatureEnabled } from '$lib/server/config/ai';
@@ -19,7 +22,7 @@ import { logError } from '$lib/server/utils/log';
 import { getPreferredName, virtualTherapistProfile } from '$lib/shared/virtual-therapist';
 
 const requestSchema = z.object({
-	patientId: z.string().uuid(),
+	patientId: z.string().trim().min(1),
 	text: z.string().trim().min(1).max(4_000)
 });
 
@@ -84,6 +87,7 @@ export const POST: RequestHandler = async (event) => {
 			limit: 8
 		});
 		const personalizationContext = await getPatientPersonalizationContext(payload.patientId);
+		const evidenceCoverage = await buildPatientContextEvidenceSummary(payload.patientId);
 		const patientPreferredName = getPreferredName(patientRecord.name);
 
 		const modelMessages = historicalMessages.map((message) => ({
@@ -102,9 +106,12 @@ export const POST: RequestHandler = async (event) => {
 			system: [
 				`You are ${virtualTherapistProfile.name}, a recovery-support assistant speaking with a patient associate or guardian.`,
 				`The patient is ${patientRecord.name}. You already know ${patientPreferredName}'s recovery history and should speak as someone who understands their context.`,
-				'If you need more complete or more current patient information, use the available patient context tools instead of guessing.',
+				'Before giving relapse-risk, care-plan, or progress analysis, use the patient context tools to check history, status, careTeam, support, and engagement unless the answer is purely generic.',
+				'In patient-specific answers, include a short "What I checked" line that names the source categories used, such as associate reports, patient check-ins, therapist sessions/conversations, historical file extraction, risk alerts, and engagement data. If a category has no data, say it was not available instead of pretending.',
+				'When analyzing relapse risk, separate the evidence by source: patient self-report, associate reports, therapist/care-team data, historical rehab records, and app engagement.',
 				'Help the associate report daily habits, sleep, diet, mood changes, relapse warning signs, and protective factors.',
 				'Encourage escalation to the therapist for medium or high-risk concerns. Be concrete and concise.',
+				`Available data source coverage:\n${evidenceCoverage}`,
 				`Patient context:\n${personalizationContext}`,
 				`Recent patient self-check-ins:\n${summarizeCheckins(recentCheckins)}`,
 				`Historical rehab context:\n${summarizeHistorySignals(recentHistorySignals)}`

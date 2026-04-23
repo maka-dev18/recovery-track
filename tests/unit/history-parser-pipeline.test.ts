@@ -104,6 +104,21 @@ vi.mock('ai', () => ({
 	generateObject: vi.fn()
 }));
 
+vi.mock('@google/genai', () => ({
+	GoogleGenAI: vi.fn(function MockGoogleGenAI() {
+		return {
+			files: {
+				upload: vi.fn(async () => ({ name: 'mock-gemini-file', uri: 'mock://gemini-file' }))
+			},
+			models: {
+				generateContent: vi.fn(async () => {
+					throw new Error('mock gemini unavailable');
+				})
+			}
+		};
+	})
+}));
+
 vi.mock('pdf-parse', () => ({
 	PDFParse: vi.fn()
 }));

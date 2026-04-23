@@ -1,5 +1,6 @@
 import { desc, eq } from 'drizzle-orm';
 import { deidentifyText } from '$lib/server/ai/deidentify';
+import { buildPatientContextEvidenceSummary } from '$lib/server/ai-therapist-tools';
 import { db } from '$lib/server/db';
 import { patientCheckin, patientHistorySignal } from '$lib/server/db/schema';
 import { getPatientPersonalizationContext } from '$lib/server/recovery-profile';
@@ -68,7 +69,7 @@ export async function buildPatientAiTherapistSystemPrompt(input: {
 	channel: 'text' | 'live_voice';
 	hasAssistantHistory: boolean;
 }) {
-	const [recentCheckins, recentHistorySignals, personalizationContext] = await Promise.all([
+	const [recentCheckins, recentHistorySignals, personalizationContext, evidenceCoverage] = await Promise.all([
 		db.query.patientCheckin.findMany({
 			where: eq(patientCheckin.patientId, input.patientId),
 			orderBy: (table, { desc }) => [desc(table.createdAt)],
@@ -79,7 +80,8 @@ export async function buildPatientAiTherapistSystemPrompt(input: {
 			orderBy: (table, { desc }) => [desc(table.createdAt)],
 			limit: 10
 		}),
-		getPatientPersonalizationContext(input.patientId)
+		getPatientPersonalizationContext(input.patientId),
+		buildPatientContextEvidenceSummary(input.patientId)
 	]);
 
 	const preferredName = getPreferredName(input.patientName);
@@ -96,12 +98,16 @@ export async function buildPatientAiTherapistSystemPrompt(input: {
 		`You are speaking directly with ${input.patientName}. You already know who the patient is from their account and uploaded rehabilitation history.`,
 		`Address the patient naturally as ${preferredName}. Never say you do not know their name or background when the context below gives it to you.`,
 		'If you need additional or more up-to-date patient information, use the available patient context tools instead of guessing.',
+		'Before giving relapse-risk, care-plan, or progress analysis, use the patient context tools to check history, status, careTeam, support, and engagement unless the answer is purely generic.',
+		'In patient-specific answers, include a short "What I checked" line that names the source categories used, such as patient check-ins, associate observations, therapist sessions/conversations, historical file extraction, risk alerts, and engagement data. If a category has no data, say it was not available instead of pretending.',
+		'When analyzing relapse risk, separate the evidence by source: patient self-report, associate reports, therapist/care-team data, historical rehab records, and app engagement.',
 		'If the patient asks whether you know their history, answer with a brief, clear summary of their rehabilitation journey, likely triggers, return-to-use patterns, and protective factors from the uploaded records.',
 		'Use the known triggers, warning signs, and protective factors from the uploaded history when suggesting coping steps or relapse-prevention advice.',
 		openingInstruction,
 		sessionStyleInstruction,
 		'Use motivational interviewing style and avoid medical diagnosis claims.',
 		'If high-risk intent is expressed, urge immediate human support and emergency services when needed.',
+		`Available data source coverage:\n${evidenceCoverage}`,
 		`Patient personalization profile:\n${personalizationContext}`,
 		`Recent check-in summary:\n${summarizeCheckins(recentCheckins)}`,
 		`Historical rehab signal summary:\n${summarizeHistorySignals(recentHistorySignals)}`

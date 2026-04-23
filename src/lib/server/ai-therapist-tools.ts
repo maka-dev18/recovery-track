@@ -3,30 +3,39 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '$lib/server/db';
 import {
+	adminOutreachLog,
+	associateObservation,
+	associatePatientAssignment,
+	conversationThread,
 	patientCheckin,
 	patientHistoryFile,
+	patientHistorySignal,
+	patientSignal,
 	riskAlert,
-	riskScore
+	riskScore,
+	therapistPatientAssignment,
+	therapySession
 } from '$lib/server/db/schema';
+import { deidentifyText } from '$lib/server/ai/deidentify';
 import { buildPatientRecommendations, listCopingActivity, listPatientBadges } from '$lib/server/engagement';
 import { listRecentSignalsForPatient } from '$lib/server/patient-signals';
 import { getPatientPersonalizationSnapshot } from '$lib/server/recovery-profile';
 import { listUpcomingTherapySessionsForPatient } from '$lib/server/therapy-sessions';
 import { listTherapistDirectConversationsForPatient } from '$lib/server/conversations';
 
-const contextSectionsSchema = z.enum(['history', 'status', 'support', 'engagement']);
+const contextSectionsSchema = z.enum(['history', 'status', 'support', 'careTeam', 'engagement']);
 const contextToolInputSchema = z.object({
 	sections: z
 		.array(contextSectionsSchema)
 		.min(1)
-		.max(4)
+		.max(5)
 		.optional()
 		.describe('The patient-data sections to retrieve. Omit to fetch every section.'),
 	limit: z
 		.number()
 		.int()
 		.min(3)
-		.max(12)
+		.max(20)
 		.optional()
 		.describe('How many recent items to include for list-based sections.'),
 	includeMessages: z
@@ -57,13 +66,39 @@ function parseRiskFactors(raw: string) {
 	}
 }
 
+function parseJsonObject(raw: string | null | undefined) {
+	if (!raw) {
+		return {};
+	}
+
+	try {
+		const parsed = JSON.parse(raw);
+		return parsed && typeof parsed === 'object' ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function compactText(value: string | null | undefined, maxLength = 500) {
+	if (!value) {
+		return null;
+	}
+
+	return deidentifyText(value).replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
 async function getHistorySection(patientId: string, limit: number) {
-	const [snapshot, files] = await Promise.all([
+	const [snapshot, files, historySignals] = await Promise.all([
 		getPatientPersonalizationSnapshot(patientId),
 		db.query.patientHistoryFile.findMany({
 			where: eq(patientHistoryFile.patientId, patientId),
 			orderBy: (table, { desc: orderDesc }) => [orderDesc(table.createdAt)],
 			limit
+		}),
+		db.query.patientHistorySignal.findMany({
+			where: eq(patientHistorySignal.patientId, patientId),
+			orderBy: (table, { desc: orderDesc }) => [orderDesc(table.createdAt)],
+			limit: limit * 4
 		})
 	]);
 
@@ -83,8 +118,18 @@ async function getHistorySection(patientId: string, limit: number) {
 		uploadedFiles: files.map((file) => ({
 			fileName: file.fileName,
 			parseStatus: file.parseStatus,
+			extractionModel: file.extractionModel,
+			extractedAt: toIso(file.extractedAt),
 			parsedAt: toIso(file.parsedAt),
-			uploadedAt: toIso(file.createdAt)
+			uploadedAt: toIso(file.createdAt),
+			extractedData: parseJsonObject(file.extractionJson)
+		})),
+		extractedSignals: historySignals.map((signal) => ({
+			signalType: signal.signalType,
+			confidence: signal.confidence,
+			occurredAt: toIso(signal.occurredAt),
+			createdAt: toIso(signal.createdAt),
+			value: parseJsonObject(signal.signalValueJson)
 		}))
 	};
 }
@@ -175,14 +220,227 @@ async function getSupportSection(patientId: string, limit: number, includeMessag
 			therapistEmail: conversation.therapistEmail,
 			lastMessageAt: toIso(conversation.lastMessageAt),
 			lastMessagePreview: conversation.lastMessagePreview,
+					recentMessages: includeMessages
+						? conversation.messages.slice(-4).map((message) => ({
+								role: message.role,
+								senderName: message.senderName,
+								content: compactText(message.content, 400),
+								createdAt: toIso(message.createdAt)
+							}))
+						: []
+		}))
+	};
+}
+
+async function getCareTeamSection(patientId: string, limit: number, includeMessages: boolean) {
+	const [
+		therapistAssignments,
+		associateAssignments,
+		associateObservations,
+		careThreads,
+		recentTherapySessions,
+		sourceSignals,
+		outreachLogs
+	] = await Promise.all([
+		db.query.therapistPatientAssignment.findMany({
+			where: eq(therapistPatientAssignment.patientId, patientId),
+			orderBy: (table, { desc: orderDesc }) => [orderDesc(table.createdAt)],
+			with: {
+				therapist: {
+					columns: { id: true, name: true, email: true }
+				},
+				assignedByUser: {
+					columns: { id: true, name: true, email: true }
+				}
+			}
+		}),
+		db.query.associatePatientAssignment.findMany({
+			where: eq(associatePatientAssignment.patientId, patientId),
+			orderBy: (table, { desc: orderDesc }) => [orderDesc(table.createdAt)],
+			with: {
+				associate: {
+					columns: { id: true, name: true, email: true }
+				},
+				assignedByUser: {
+					columns: { id: true, name: true, email: true }
+				}
+			}
+		}),
+		db.query.associateObservation.findMany({
+			where: eq(associateObservation.patientId, patientId),
+			orderBy: (table, { desc: orderDesc }) => [orderDesc(table.createdAt)],
+			limit,
+			with: {
+				associate: {
+					columns: { id: true, name: true, email: true }
+				}
+			}
+		}),
+		db.query.conversationThread.findMany({
+			where: eq(conversationThread.patientId, patientId),
+			orderBy: (table, { desc: orderDesc }) => [orderDesc(table.lastMessageAt), orderDesc(table.createdAt)],
+			limit,
+			with: {
+				therapist: {
+					columns: { id: true, name: true, email: true }
+				},
+				associate: {
+					columns: { id: true, name: true, email: true }
+				},
+				createdByUser: {
+					columns: { id: true, name: true, email: true }
+				},
+				messages: {
+					orderBy: (table, { desc: orderDesc }) => [orderDesc(table.occurredAt)],
+					limit: includeMessages ? 6 : 0,
+					with: {
+						senderUser: {
+							columns: { id: true, name: true, email: true, role: true }
+						}
+					}
+				}
+			}
+		}),
+		db.query.therapySession.findMany({
+			where: eq(therapySession.patientId, patientId),
+			orderBy: (table, { desc: orderDesc }) => [
+				orderDesc(table.scheduledStartAt),
+				orderDesc(table.createdAt)
+			],
+			limit,
+			with: {
+				therapist: {
+					columns: { id: true, name: true, email: true }
+				},
+				createdByUser: {
+					columns: { id: true, name: true, email: true }
+				},
+				confirmedByUser: {
+					columns: { id: true, name: true, email: true }
+				}
+			}
+		}),
+		db.query.patientSignal.findMany({
+			where: eq(patientSignal.patientId, patientId),
+			orderBy: (table, { desc: orderDesc }) => [orderDesc(table.occurredAt), orderDesc(table.createdAt)],
+			limit,
+			with: {
+				detectedByUser: {
+					columns: { id: true, name: true, email: true, role: true }
+				},
+				thread: {
+					columns: { id: true, channel: true, therapistId: true, associateId: true }
+				},
+				therapySession: {
+					columns: { id: true, status: true, mode: true, scheduledStartAt: true }
+				}
+			}
+		}),
+		db.query.adminOutreachLog.findMany({
+			where: eq(adminOutreachLog.patientId, patientId),
+			orderBy: (table, { desc: orderDesc }) => [orderDesc(table.createdAt)],
+			limit,
+			with: {
+				adminUser: {
+					columns: { id: true, name: true, email: true }
+				},
+				associate: {
+					columns: { id: true, name: true, email: true }
+				},
+				targetUser: {
+					columns: { id: true, name: true, email: true, role: true }
+				}
+			}
+		})
+	]);
+
+	return {
+		therapists: therapistAssignments.map((assignment) => ({
+			therapistId: assignment.therapistId,
+			name: assignment.therapist?.name ?? null,
+			email: assignment.therapist?.email ?? null,
+			assignedAt: toIso(assignment.createdAt),
+			assignedBy: assignment.assignedByUser?.name ?? null
+		})),
+		associates: associateAssignments.map((assignment) => ({
+			associateId: assignment.associateId,
+			name: assignment.associate?.name ?? null,
+			email: assignment.associate?.email ?? null,
+			relationshipLabel: assignment.relationshipLabel,
+			assignedAt: toIso(assignment.createdAt),
+			assignedBy: assignment.assignedByUser?.name ?? null
+		})),
+		associateObservations: associateObservations.map((observation) => ({
+			associateName: observation.associate?.name ?? null,
+			associateEmail: observation.associate?.email ?? null,
+			category: observation.category,
+			severity: observation.severity,
+			note: compactText(observation.note, 500),
+			createdAt: toIso(observation.createdAt)
+		})),
+		careTeamConversations: careThreads.map((thread) => ({
+			threadId: thread.id,
+			channel: thread.channel,
+			status: thread.status,
+			subject: thread.subject,
+			therapistName: thread.therapist?.name ?? null,
+			associateName: thread.associate?.name ?? null,
+			createdBy: thread.createdByUser?.name ?? null,
+			lastMessageAt: toIso(thread.lastMessageAt),
 			recentMessages: includeMessages
-				? conversation.messages.slice(-4).map((message) => ({
-						role: message.role,
-						senderName: message.senderName,
-						content: message.content,
-						createdAt: toIso(message.createdAt)
-					}))
+				? thread.messages
+						.slice()
+						.reverse()
+						.map((message) => ({
+							role: message.role,
+							senderName: message.senderUser?.name ?? null,
+							senderRole: message.senderUser?.role ?? null,
+							content: compactText(message.content, 400),
+							occurredAt: toIso(message.occurredAt)
+						}))
 				: []
+		})),
+		therapySessions: recentTherapySessions.map((session) => ({
+			sessionId: session.id,
+			therapistName: session.therapist?.name ?? null,
+			mode: session.mode,
+			status: session.status,
+			sessionType: session.sessionType,
+			requiresConfirmation: session.requiresConfirmation,
+			durationMinutes: session.durationMinutes,
+			scheduledStartAt: toIso(session.scheduledStartAt),
+			startedAt: toIso(session.startedAt),
+			endedAt: toIso(session.endedAt),
+			summary: compactText(session.summary, 500),
+			notes: compactText(session.notes, 500),
+			automationReason: compactText(session.automationReason, 300),
+			createdBy: session.createdByUser?.name ?? null,
+			confirmedBy: session.confirmedByUser?.name ?? null
+		})),
+		sourceSignals: sourceSignals.map((signal) => ({
+			source: signal.source,
+			signalType: signal.signalType,
+			status: signal.status,
+			severity: signal.severity,
+			confidence: signal.confidence,
+			summary: compactText(signal.summary, 500),
+			payload: parseJsonObject(signal.payloadJson),
+			detectedByName: signal.detectedByUser?.name ?? null,
+			detectedByRole: signal.detectedByUser?.role ?? null,
+			threadChannel: signal.thread?.channel ?? null,
+			therapySessionStatus: signal.therapySession?.status ?? null,
+			occurredAt: toIso(signal.occurredAt),
+			createdAt: toIso(signal.createdAt)
+		})),
+		adminOutreach: outreachLogs.map((log) => ({
+			channel: log.channel,
+			status: log.status,
+			note: compactText(log.note, 300),
+			adminName: log.adminUser?.name ?? null,
+			associateName: log.associate?.name ?? null,
+			targetName: log.targetUser?.name ?? null,
+			targetRole: log.targetUser?.role ?? null,
+			createdAt: toIso(log.createdAt)
 		}))
 	};
 }
@@ -216,30 +474,64 @@ async function getPatientContextBundle(args: {
 	limit?: number;
 	includeMessages?: boolean;
 }) {
-	const selectedSections = new Set(args.sections ?? ['history', 'status', 'support', 'engagement']);
-	const limit = args.limit ?? 6;
+	const selectedSections = new Set(
+		args.sections ?? ['history', 'status', 'support', 'careTeam', 'engagement']
+	);
+	const limit = args.limit ?? 10;
 	const includeMessages = args.includeMessages ?? true;
 
-	const [history, status, support, engagement] = await Promise.all([
+	const [history, status, support, careTeam, engagement] = await Promise.all([
 		selectedSections.has('history') ? getHistorySection(args.patientId, limit) : null,
 		selectedSections.has('status') ? getStatusSection(args.patientId, limit) : null,
 		selectedSections.has('support') ? getSupportSection(args.patientId, limit, includeMessages) : null,
+		selectedSections.has('careTeam') ? getCareTeamSection(args.patientId, limit, includeMessages) : null,
 		selectedSections.has('engagement') ? getEngagementSection(args.patientId, limit) : null
 	]);
 
 	return {
+		sourceCoverage: {
+			historyFiles: history?.uploadedFiles.length ?? 0,
+			historySignals: history?.extractedSignals.length ?? 0,
+			checkins: status?.recentCheckins.length ?? 0,
+			riskAlerts: status?.recentAlerts.length ?? 0,
+			riskSignals: status?.recentClinicalSignals.length ?? 0,
+			therapistConversations: support?.therapistConversations.length ?? 0,
+			upcomingSessions: support?.upcomingSessions.length ?? 0,
+			assignedTherapists: careTeam?.therapists.length ?? 0,
+			assignedAssociates: careTeam?.associates.length ?? 0,
+			associateObservations: careTeam?.associateObservations.length ?? 0,
+			careTeamThreads: careTeam?.careTeamConversations.length ?? 0,
+			therapySessions: careTeam?.therapySessions.length ?? 0,
+			sourceSignals: careTeam?.sourceSignals.length ?? 0,
+			adminOutreach: careTeam?.adminOutreach.length ?? 0,
+			engagementItems:
+				(engagement?.badges.length ?? 0) + (engagement?.recentCopingActivity.length ?? 0)
+		},
 		history,
 		status,
 		support,
+		careTeam,
 		engagement
 	};
+}
+
+export { getPatientContextBundle };
+
+export async function buildPatientContextEvidenceSummary(patientId: string) {
+	const bundle = await getPatientContextBundle({
+		patientId,
+		limit: 6,
+		includeMessages: false
+	});
+
+	return JSON.stringify(bundle.sourceCoverage);
 }
 
 export function buildPatientContextTools(patientId: string) {
 	return {
 		get_patient_context: tool({
 			description:
-				'Retrieve authoritative patient information from Recovery Track, including rehabilitation history, triggers, current status, therapist support context, and engagement data.',
+				'Retrieve authoritative patient information from Recovery Track, including rehabilitation history, current risk, patient check-ins, associate observations, therapist conversations, care-team activity, clinical signals, and engagement data. Use this before making patient-specific relapse or care analysis.',
 			inputSchema: contextToolInputSchema,
 			execute: async (input) => getPatientContextBundle({ patientId, ...input })
 		}),
@@ -270,6 +562,25 @@ export function buildPatientContextTools(patientId: string) {
 					.describe('How many recent items to include per status list.')
 			}),
 			execute: async ({ limit }) => getStatusSection(patientId, limit ?? 6)
+		}),
+		get_patient_care_team_context: tool({
+			description:
+				'Retrieve associate observations, assigned associates, assigned therapists, therapist sessions, care-team conversations, source signals, and outreach logs for the patient.',
+			inputSchema: z.object({
+				limit: z
+					.number()
+					.int()
+					.min(3)
+					.max(20)
+					.optional()
+					.describe('How many recent care-team items to include.'),
+				includeMessages: z
+					.boolean()
+					.optional()
+					.describe('Include recent care-team conversation snippets.')
+			}),
+			execute: async ({ limit, includeMessages }) =>
+				getCareTeamSection(patientId, limit ?? 10, includeMessages ?? true)
 		})
 	};
 }

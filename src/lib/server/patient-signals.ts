@@ -139,7 +139,7 @@ export async function createPatientSignal(args: {
 export async function analyzeTextIntoPatientSignal(args: {
 	patientId: string;
 	text: string;
-	source: 'conversation' | 'therapy_session' | 'manual' | 'observation';
+	source: 'conversation' | 'therapy_session' | 'manual' | 'observation' | 'checkin';
 	originLabel: string;
 	threadId?: string | null;
 	messageId?: string | null;

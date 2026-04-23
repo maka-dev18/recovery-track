@@ -14,6 +14,11 @@ export type QueueJob<TPayload = unknown> = {
 	runAfter: Date;
 };
 
+export const HISTORY_PARSE_MAX_ATTEMPTS = 4;
+
+const RATE_LIMIT_RETRY_DELAYS_MS = [120_000, 300_000, 600_000, 1_200_000];
+const DEFAULT_RETRY_DELAYS_MS = [30_000, 120_000, 300_000, 600_000];
+
 function serializePayload(payload: unknown): string {
 	return JSON.stringify(payload ?? {});
 }
@@ -69,6 +74,34 @@ export async function claimNextJob(): Promise<QueueJob | null> {
 	};
 }
 
+export async function claimJobById(jobId: string): Promise<QueueJob | null> {
+	const job = await db.query.jobQueue.findFirst({
+		where: and(eq(jobQueue.id, jobId), inArray(jobQueue.status, ['pending', 'retry']))
+	});
+
+	if (!job) {
+		return null;
+	}
+
+	await db
+		.update(jobQueue)
+		.set({
+			status: 'running',
+			attempts: job.attempts + 1,
+			updatedAt: new Date()
+		})
+		.where(eq(jobQueue.id, job.id));
+
+	return {
+		id: job.id,
+		type: job.type as QueueJobType,
+		payload: deserializePayload(job.payloadJson),
+		status: 'running',
+		attempts: job.attempts + 1,
+		runAfter: job.runAfter
+	};
+}
+
 export async function completeJob(jobId: string) {
 	await db
 		.update(jobQueue)
@@ -80,13 +113,31 @@ export async function completeJob(jobId: string) {
 		.where(eq(jobQueue.id, jobId));
 }
 
-export async function failJob(jobId: string, message: string, options?: { retry?: boolean }) {
+export function isRateLimitError(message: string) {
+	return /(rate.?limit|quota|429|resource exhausted|too many requests)/i.test(message);
+}
+
+export function shouldRetryJob(attempts: number) {
+	return attempts < HISTORY_PARSE_MAX_ATTEMPTS;
+}
+
+export function getRetryRunAfter(attempts: number, message: string) {
+	const delays = isRateLimitError(message) ? RATE_LIMIT_RETRY_DELAYS_MS : DEFAULT_RETRY_DELAYS_MS;
+	const delay = delays[Math.min(Math.max(attempts - 1, 0), delays.length - 1)];
+	return new Date(Date.now() + delay);
+}
+
+export async function failJob(
+	jobId: string,
+	message: string,
+	options?: { retry?: boolean; runAfter?: Date }
+) {
 	await db
 		.update(jobQueue)
 		.set({
 			status: options?.retry ? 'retry' : 'failed',
 			lastError: message,
-			runAfter: options?.retry ? new Date(Date.now() + 30_000) : new Date(),
+			runAfter: options?.retry ? (options.runAfter ?? new Date(Date.now() + 30_000)) : new Date(),
 			updatedAt: new Date()
 		})
 		.where(eq(jobQueue.id, jobId));

@@ -10,7 +10,13 @@
 	import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
 	import type { ActionData, PageServerData } from "./$types";
 
-	let { data, form }: { data: PageServerData; form: ActionData } = $props();
+	type AdminView = "overview" | "access" | "history" | "outreach" | "directory";
+	let {
+		data,
+		form,
+		initialView = "overview"
+	}: { data: PageServerData; form: ActionData; initialView?: AdminView } = $props();
+	let activeView = $derived(initialView);
 	let activeAction = $state<string | null>(null);
 	let historyPatientId = $state<string>("");
 	let historyFile = $state<File | null>(null);
@@ -19,6 +25,10 @@
 	let historyError = $state<string | null>(null);
 	let activeReprocessFileId = $state<string | null>(null);
 	let historyFileInput = $state<HTMLInputElement | null>(null);
+	let selectedHistoryFileId = $state<string | null>(null);
+	let selectedHistoryFile = $derived(
+		data.historyFiles.find((file) => file.id === selectedHistoryFileId) ?? data.historyFiles[0] ?? null
+	);
 
 	function pendingForm(node: HTMLFormElement, actionName: string) {
 		return enhance(node, () => {
@@ -49,6 +59,51 @@
 		if (size < 1024) return `${size} B`;
 		if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
 		return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	function parseJsonValue(raw: string | null | undefined) {
+		if (!raw) return null;
+		try {
+			return JSON.parse(raw);
+		} catch {
+			return null;
+		}
+	}
+
+	function formatJson(raw: string | null | undefined) {
+		const parsed = parseJsonValue(raw);
+		return parsed ? JSON.stringify(parsed, null, 2) : raw || "{}";
+	}
+
+	function summarizeSignal(raw: string) {
+		const parsed = parseJsonValue(raw);
+		if (!parsed || typeof parsed !== "object") {
+			return raw;
+		}
+
+		if ("summary" in parsed && typeof parsed.summary === "string") {
+			return parsed.summary;
+		}
+
+		if ("label" in parsed && typeof parsed.label === "string") {
+			return parsed.label;
+		}
+
+		if ("row" in parsed) {
+			return JSON.stringify(parsed.row);
+		}
+
+		return JSON.stringify(parsed);
+	}
+
+	function selectHistoryFile(fileId: string | null | undefined) {
+		if (fileId) {
+			selectedHistoryFileId = fileId;
+		}
+	}
+
+	function historyRunActionLabel(status: string) {
+		return status === "failed" || status === "retry" ? "Retry" : "Reprocess";
 	}
 
 	function resolveErrorMessage(error: unknown, fallback: string) {
@@ -189,6 +244,33 @@
 		</div>
 	{/if}
 
+	<section class="rounded-lg border bg-white p-4 shadow-sm md:p-5">
+		<div class="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+			<div class="space-y-1">
+				<p class="text-muted-foreground text-sm">Admin workspace</p>
+				<h1 class="text-2xl font-semibold">Platform operations</h1>
+				<p class="text-muted-foreground max-w-2xl text-sm">
+					Use the navigation below to separate account setup, history ingestion, outreach, and directories.
+				</p>
+			</div>
+			<div class="grid gap-2 sm:grid-cols-3 lg:min-w-[28rem]">
+				<div class="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2">
+					<p class="text-xs text-emerald-700">Users</p>
+					<p class="font-semibold text-emerald-950">{data.stats.totalUsers}</p>
+				</div>
+				<div class="rounded-md border border-cyan-100 bg-cyan-50 px-3 py-2">
+					<p class="text-xs text-cyan-700">Patients</p>
+					<p class="font-semibold text-cyan-950">{data.stats.patients}</p>
+				</div>
+				<div class="rounded-md border border-amber-100 bg-amber-50 px-3 py-2">
+					<p class="text-xs text-amber-700">Outreach</p>
+					<p class="font-semibold text-amber-950">{data.inactivePatients.length}</p>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	{#if activeView === "overview"}
 	<section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
@@ -227,6 +309,7 @@
 		</Card.Root>
 	</section>
 
+	{:else if activeView === "access"}
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -448,6 +531,7 @@
 		</div>
 	</section>
 
+	{:else if activeView === "history"}
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -531,24 +615,41 @@
 								<Table.Head>Status</Table.Head>
 								<Table.Head>Attempts</Table.Head>
 								<Table.Head>Run after</Table.Head>
+								<Table.Head>Last error</Table.Head>
 							</Table.Row>
 						</Table.Header>
 						<Table.Body>
 							{#if data.queueJobs.length === 0}
 								<Table.Row>
-									<Table.Cell colspan={4} class="text-muted-foreground py-6 text-center">
+									<Table.Cell colspan={5} class="text-muted-foreground py-6 text-center">
 										No jobs in queue yet.
 									</Table.Cell>
 								</Table.Row>
 							{:else}
 								{#each data.queueJobs as job (job.id)}
 									<Table.Row>
-										<Table.Cell>{job.type}</Table.Cell>
+										<Table.Cell>
+											<button
+												type="button"
+												class="text-left font-medium text-blue-700 hover:underline disabled:text-foreground disabled:no-underline"
+												disabled={!job.fileId}
+												onclick={() => selectHistoryFile(job.fileId)}
+											>
+												{job.type}
+											</button>
+										</Table.Cell>
 										<Table.Cell>
 											<Badge variant="outline">{job.status}</Badge>
 										</Table.Cell>
 										<Table.Cell>{job.attempts}</Table.Cell>
 										<Table.Cell>{formatDate(job.runAfter)}</Table.Cell>
+										<Table.Cell>
+											{#if job.lastError}
+												<p class="text-destructive max-w-[320px] text-xs">{job.lastError}</p>
+											{:else}
+												<span class="text-muted-foreground text-xs">—</span>
+											{/if}
+										</Table.Cell>
 									</Table.Row>
 								{/each}
 							{/if}
@@ -559,6 +660,160 @@
 		</Card.Root>
 	</section>
 
+	<section class="grid gap-6 xl:grid-cols-[1fr_1.1fr]">
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>History extraction runs</Card.Title>
+				<Card.Description>Click a run to inspect Gemini extraction results and stored signals.</Card.Description>
+			</Card.Header>
+			<Card.Content>
+				<div class="overflow-x-auto">
+					<Table.Root>
+						<Table.Header>
+							<Table.Row>
+								<Table.Head>Patient</Table.Head>
+								<Table.Head>File</Table.Head>
+								<Table.Head>Status</Table.Head>
+								<Table.Head class="text-right">Action</Table.Head>
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{#if data.historyFiles.length === 0}
+								<Table.Row>
+									<Table.Cell colspan={4} class="text-muted-foreground py-6 text-center">
+										No rehab files uploaded yet.
+									</Table.Cell>
+								</Table.Row>
+							{:else}
+								{#each data.historyFiles as file (file.id)}
+									<Table.Row class={selectedHistoryFile?.id === file.id ? "bg-blue-50/70" : ""}>
+										<Table.Cell>
+											<div class="font-medium">{file.patientName}</div>
+											<div class="text-muted-foreground text-xs">{file.patientEmail}</div>
+										</Table.Cell>
+										<Table.Cell>
+											<button
+												type="button"
+												class="text-left font-medium text-blue-700 hover:underline"
+												onclick={() => selectHistoryFile(file.id)}
+											>
+												{file.fileName}
+											</button>
+											<div class="text-muted-foreground text-xs">{formatBytes(file.byteSize)} · {file.mimeType}</div>
+										</Table.Cell>
+										<Table.Cell>
+											<div class="flex flex-col gap-1">
+												<Badge variant="outline">{file.parseStatus}</Badge>
+												{#if file.parseError}
+													<p class="text-destructive max-w-[260px] text-xs">{file.parseError}</p>
+												{/if}
+											</div>
+										</Table.Cell>
+										<Table.Cell class="text-right">
+											<div class="flex justify-end gap-2">
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													class="border-blue-200 text-blue-700 hover:bg-blue-50"
+													onclick={() => selectHistoryFile(file.id)}
+												>
+													View
+												</Button>
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													class="border-blue-200 text-blue-700 hover:bg-blue-50"
+													disabled={!data.aiFeatures.historyIngestEnabled || activeReprocessFileId === file.id}
+													onclick={() => reprocessHistoryFile(file.patientId, file.id)}
+												>
+													{#if activeReprocessFileId === file.id}
+														<LoaderCircleIcon class="size-4 animate-spin" />
+													{:else}
+														{historyRunActionLabel(file.parseStatus)}
+													{/if}
+												</Button>
+											</div>
+										</Table.Cell>
+									</Table.Row>
+								{/each}
+							{/if}
+						</Table.Body>
+					</Table.Root>
+				</div>
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>Extracted data</Card.Title>
+				<Card.Description>Structured data stored from the selected history run.</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-4">
+				{#if !selectedHistoryFile}
+					<p class="text-muted-foreground text-sm">Select a history run to inspect its extracted data.</p>
+				{:else}
+					<div class="grid gap-3 rounded-lg border border-blue-100 bg-blue-50/50 p-4 text-sm">
+						<div>
+							<p class="font-medium">{selectedHistoryFile.fileName}</p>
+							<p class="text-muted-foreground text-xs">
+								{selectedHistoryFile.patientName} · uploaded {formatDate(selectedHistoryFile.createdAt)}
+							</p>
+						</div>
+						<div class="flex flex-wrap gap-2">
+							<Badge variant="outline">{selectedHistoryFile.parseStatus}</Badge>
+							{#if selectedHistoryFile.extractionModel}
+								<Badge class="bg-emerald-50 text-emerald-700 hover:bg-emerald-50">
+									{selectedHistoryFile.extractionModel}
+								</Badge>
+							{/if}
+							{#if selectedHistoryFile.extractedAt}
+								<Badge variant="secondary">Extracted {formatDate(selectedHistoryFile.extractedAt)}</Badge>
+							{/if}
+						</div>
+						{#if selectedHistoryFile.geminiFileName || selectedHistoryFile.geminiFileUri}
+							<div class="text-muted-foreground text-xs">
+								<div>Gemini file: {selectedHistoryFile.geminiFileName ?? "—"}</div>
+								<div class="break-all">URI: {selectedHistoryFile.geminiFileUri ?? "—"}</div>
+							</div>
+						{/if}
+					</div>
+
+					<div class="space-y-2">
+						<p class="text-sm font-medium">Structured extraction JSON</p>
+						<pre class="max-h-[280px] overflow-auto rounded-md border bg-slate-950 p-3 text-xs text-slate-50">{formatJson(selectedHistoryFile.extractionJson)}</pre>
+					</div>
+
+					<div class="space-y-2">
+						<p class="text-sm font-medium">Stored clinical signals</p>
+						{#if selectedHistoryFile.signals.length === 0}
+							<p class="text-muted-foreground text-sm">No extracted signals are stored for this run yet.</p>
+						{:else}
+							<div class="max-h-[320px] space-y-2 overflow-y-auto">
+								{#each selectedHistoryFile.signals as signal (signal.id)}
+									<div class="rounded-md border border-blue-100 bg-white p-3 text-sm">
+										<div class="flex items-center justify-between gap-3">
+											<Badge variant="outline">{signal.signalType.replaceAll("_", " ")}</Badge>
+											<span class="text-muted-foreground text-xs">
+												Confidence {signal.confidence}
+											</span>
+										</div>
+										<p class="mt-2 text-sm">{summarizeSignal(signal.signalValueJson)}</p>
+										<p class="text-muted-foreground mt-1 text-xs">
+											Occurred: {formatDate(signal.occurredAt)} · Stored: {formatDate(signal.createdAt)}
+										</p>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	{:else if activeView === "outreach"}
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -746,6 +1001,7 @@
 		</Card.Root>
 	</section>
 
+	{:else if activeView === "directory"}
 	<section class="grid gap-6">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -1201,7 +1457,7 @@
 												{#if activeReprocessFileId === file.id}
 													<LoaderCircleIcon class="size-4 animate-spin" />
 												{:else}
-													Reprocess
+													{historyRunActionLabel(file.parseStatus)}
 												{/if}
 											</Button>
 										</Table.Cell>
@@ -1214,4 +1470,5 @@
 			</Card.Content>
 		</Card.Root>
 	</section>
+	{/if}
 </div>

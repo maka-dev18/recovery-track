@@ -26,6 +26,10 @@ import {
 import { analyzeTextIntoPatientSignal, listRecentSignalsForTherapist } from '$lib/server/patient-signals';
 import { buildTherapistReports } from '$lib/server/reporting';
 import { getTherapistPatientIds, therapistHasPatientAssignment } from '$lib/server/relationships';
+import {
+	buildRelapsePredictionsForPatients,
+	ensureRelapsePredictionFollowUpsForPatients
+} from '$lib/server/relapse-prediction';
 import { recalculatePatientRisk } from '$lib/server/risk';
 import {
 	confirmSuggestedTherapySession,
@@ -34,6 +38,28 @@ import {
 	rescheduleTherapySession,
 	saveTherapySessionNote
 } from '$lib/server/therapy-sessions';
+
+function parseRiskFactors(raw: string | null | undefined) {
+	if (!raw) {
+		return [];
+	}
+
+	try {
+		const parsed = JSON.parse(raw);
+		if (!Array.isArray(parsed)) {
+			return [];
+		}
+
+		return parsed
+			.filter(
+				(item): item is { label: string; points: number } =>
+					typeof item?.label === 'string' && typeof item?.points === 'number'
+			)
+			.slice(0, 6);
+	} catch {
+		return [];
+	}
+}
 
 export const load: PageServerLoad = async (event) => {
 	const therapistUser = requireRole(event, 'therapist');
@@ -86,7 +112,8 @@ export const load: PageServerLoad = async (event) => {
 						riskScore: {
 							columns: {
 								score: true,
-								tier: true
+								tier: true,
+								factors: true
 							}
 						}
 					}
@@ -136,12 +163,24 @@ export const load: PageServerLoad = async (event) => {
 				})
 			: [];
 
+	const relapsePredictions = await buildRelapsePredictionsForPatients(patientIds);
+	const patientsNeedingScheduledFollowUp = relapsePredictions
+		.filter((prediction) => prediction.likelihoodPercent >= 60)
+		.map((prediction) => prediction.patientId);
+	await ensureRelapsePredictionFollowUpsForPatients(patientsNeedingScheduledFollowUp);
+
 	const chatConversations = await listTherapistDirectConversationsForTherapist(therapistUser.id);
 	const therapySessions = await listTherapySessionsForTherapist(therapistUser.id);
 	const upcomingSessions = await listUpcomingTherapySessionsForTherapist(therapistUser.id, 16);
 	const associateConversations = await listTherapistAssociateConversationsForTherapist(therapistUser.id);
 	const patientReports = await buildTherapistReports(therapistUser.id);
 	const recentSignals = await listRecentSignalsForTherapist(therapistUser.id, 40);
+	const relapsePredictionByPatient = new Map(
+		relapsePredictions.map((prediction) => [prediction.patientId, prediction])
+	);
+	const relapseWatchlist = [...relapsePredictions]
+		.filter((prediction) => prediction.flagged)
+		.sort((left, right) => right.likelihoodPercent - left.likelihoodPercent);
 
 	return {
 		therapySessionModeValues,
@@ -154,7 +193,8 @@ export const load: PageServerLoad = async (event) => {
 				patientName: assignment.patient!.name,
 				patientEmail: assignment.patient!.email,
 				latestRisk: latestRiskByPatient.get(assignment.patientId),
-				openAlertCount: openAlertCountByPatient.get(assignment.patientId) ?? 0
+				openAlertCount: openAlertCountByPatient.get(assignment.patientId) ?? 0,
+				relapsePrediction: relapsePredictionByPatient.get(assignment.patientId) ?? null
 			})),
 		openAlerts: openAlerts
 			.filter((alert) => alert.patient)
@@ -166,6 +206,7 @@ export const load: PageServerLoad = async (event) => {
 				level: alert.level,
 				reason: alert.reason,
 				riskScore: alert.riskScore?.score ?? null,
+				riskFactors: parseRiskFactors(alert.details ?? alert.riskScore?.factors),
 				createdAt: alert.createdAt
 			})),
 		recentCheckins: recentCheckins
@@ -195,7 +236,12 @@ export const load: PageServerLoad = async (event) => {
 		therapySessions,
 		upcomingSessions,
 		associateConversations,
-		patientReports,
+		patientReports: patientReports.map((report) => ({
+			...report,
+			relapsePrediction: relapsePredictionByPatient.get(report.patientId) ?? null
+		})),
+		relapsePredictions,
+		relapseWatchlist,
 		recentSignals
 	};
 };

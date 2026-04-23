@@ -5,6 +5,7 @@ import { isAIFeatureEnabled } from '$lib/server/config/ai';
 import { db } from '$lib/server/db';
 import { patientHistoryFile } from '$lib/server/db/schema';
 import { enqueueJob } from '$lib/server/jobs/queue';
+import { processHistoryParseJob } from '$lib/server/jobs/processor';
 import { getHistoryUploadLimitBytes } from '$lib/server/storage/s3';
 import {
 	badRequest,
@@ -87,11 +88,27 @@ export const POST: RequestHandler = async (event) => {
 			type: 'history.parse',
 			payload: { fileId }
 		});
+		const jobResult = await processHistoryParseJob(jobId, fileId);
+		const processResult = {
+			processed: jobResult.status === 'done' ? 1 : 0,
+			failed: jobResult.status === 'failed' ? 1 : 0,
+			retry: jobResult.status === 'retry' ? 1 : 0,
+			attempts: jobResult.attempts,
+			retryAt: jobResult.retryAt
+		};
 
 		return created({
 			fileId,
 			jobId,
-			message: 'File registered and queued for parsing.'
+			processResult,
+			message:
+				processResult.processed > 0
+					? 'File uploaded, processed, and extracted.'
+					: processResult.retry > 0
+						? `File uploaded, but extraction hit a temporary error. The next retry is scheduled for ${processResult.retryAt?.toLocaleString()}.`
+						: processResult.failed > 0
+							? 'File uploaded, but extraction failed after the retry limit. Check the run details for the parser error.'
+					: 'File registered and queued for parsing.'
 		});
 	} catch (error) {
 		rethrowControlFlowError(error);

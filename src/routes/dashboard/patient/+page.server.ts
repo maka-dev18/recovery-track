@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
+import { parseOptionalDateTimeInput } from '$lib/server/clinical';
 import { listTherapistDirectConversationsForPatient, sendTherapistDirectMessage } from '$lib/server/conversations';
 import { buildPatientRecommendations, listCopingActivity, listPatientBadges, logCopingActivity, syncPatientBadges } from '$lib/server/engagement';
 import { requireRole } from '$lib/server/authz';
@@ -9,7 +10,10 @@ import { db } from '$lib/server/db';
 import { aiMessage, aiSession, patientCheckin, riskAlert, riskScore } from '$lib/server/db/schema';
 import { analyzeTextIntoPatientSignal, listRecentSignalsForPatient } from '$lib/server/patient-signals';
 import { createManualCriticalAlert, recalculatePatientRisk } from '$lib/server/risk';
-import { listUpcomingTherapySessionsForPatient } from '$lib/server/therapy-sessions';
+import {
+	listUpcomingTherapySessionsForPatient,
+	reschedulePatientTherapySession
+} from '$lib/server/therapy-sessions';
 
 function parseIntegerInRange(value: FormDataEntryValue | null, min: number, max: number): number | null {
 	const parsed = Number.parseInt(value?.toString() ?? '', 10);
@@ -55,7 +59,7 @@ export const load: PageServerLoad = async (event) => {
 	const chatMessages = latestTextSession
 		? await db.query.aiMessage.findMany({
 				where: eq(aiMessage.sessionId, latestTextSession.id),
-				orderBy: (table, { asc }) => [asc(table.createdAt)],
+				orderBy: (table, { desc }) => [desc(table.createdAt)],
 				limit: 40
 			})
 		: [];
@@ -135,6 +139,23 @@ export const actions: Actions = {
 			note
 		});
 
+		if (note) {
+			await analyzeTextIntoPatientSignal({
+				patientId: patientUser.id,
+				text: note,
+				source: 'checkin',
+				originLabel: 'Patient check-in note',
+				detectedByUserId: patientUser.id,
+				extraPayload: {
+					checkinId,
+					mood,
+					craving,
+					stress,
+					sleepHours
+				}
+			});
+		}
+
 		const recalculation = await recalculatePatientRisk({
 			patientId: patientUser.id,
 			source: 'checkin',
@@ -164,6 +185,37 @@ export const actions: Actions = {
 		return {
 			success: 'Your therapist team has been alerted for immediate follow-up.',
 			mode: 'human-support' as const
+		};
+	},
+	rescheduleSession: async (event) => {
+		const patientUser = requireRole(event, 'patient');
+		const formData = await event.request.formData();
+		const sessionId = formData.get('sessionId')?.toString() ?? '';
+		const sessionAt = parseOptionalDateTimeInput(formData.get('sessionAt')?.toString());
+
+		if (!sessionId || !sessionAt) {
+			return fail(400, {
+				message: 'Choose a valid date and time for the session.',
+				mode: 'reschedule-session' as const
+			});
+		}
+
+		try {
+			await reschedulePatientTherapySession({
+				sessionId,
+				patientId: patientUser.id,
+				sessionAt
+			});
+		} catch (error) {
+			return fail(400, {
+				message: error instanceof Error ? error.message : 'Could not request a new session time.',
+				mode: 'reschedule-session' as const
+			});
+		}
+
+		return {
+			success: 'New session time requested. Your therapist will see it on their schedule.',
+			mode: 'reschedule-session' as const
 		};
 	},
 	updateCheckin: async (event) => {
@@ -198,6 +250,23 @@ export const actions: Actions = {
 			.update(patientCheckin)
 			.set({ mood, craving, stress, sleepHours, note })
 			.where(eq(patientCheckin.id, checkinId));
+
+		if (note) {
+			await analyzeTextIntoPatientSignal({
+				patientId: patientUser.id,
+				text: note,
+				source: 'checkin',
+				originLabel: 'Patient check-in note update',
+				detectedByUserId: patientUser.id,
+				extraPayload: {
+					checkinId,
+					mood,
+					craving,
+					stress,
+					sleepHours
+				}
+			});
+		}
 
 		const recalculation = await recalculatePatientRisk({
 			patientId: patientUser.id,

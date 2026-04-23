@@ -13,6 +13,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import * as Table from '$lib/components/ui/table';
 	import { Textarea } from '$lib/components/ui/textarea';
+	import { keepLatestMessagePinned } from '$lib/client/chat-scroll';
 	import { getPreferredName, virtualTherapistProfile } from '$lib/shared/virtual-therapist';
 
 	type PatientPageData = {
@@ -155,7 +156,13 @@
 		mode?: string;
 	} | null;
 
-	let { data, form }: { data: PatientPageData; form: PatientPageForm } = $props();
+	type PatientView = 'today' | 'care' | 'messages' | 'history';
+	let {
+		data,
+		form,
+		initialView = 'today'
+	}: { data: PatientPageData; form: PatientPageForm; initialView?: PatientView } = $props();
+	let activeView = $derived(initialView);
 	let activeAction = $state<string | null>(null);
 	type ChatMessage = {
 		id: string;
@@ -165,16 +172,20 @@
 		createdAt: string;
 	};
 	function mapServerMessagesToChat(messages: PatientPageData['aiChatMessages']): ChatMessage[] {
-		return messages.map((message) => ({
-			id: message.id,
-			role: (message.role === 'assistant' ? 'assistant' : message.role === 'system' ? 'system' : 'user') as
-				| 'user'
+		return messages
+			.map((message) => ({
+				id: message.id,
+				role: (message.role === 'assistant' ? 'assistant' : message.role === 'system' ? 'system' : 'user') as
+					| 'user'
 				| 'assistant'
 				| 'system',
 			content: message.content,
-			modality: message.modality === 'voice' ? 'voice' : 'text',
+			modality: (message.modality === 'voice' ? 'voice' : 'text') as 'voice' | 'text',
 			createdAt: new Date(message.createdAt).toISOString()
-		}));
+		}))
+		.sort(
+			(left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
+		);
 	}
 	let chatSessionId = $state<string | null>(null);
 	let chatInput = $state('');
@@ -289,6 +300,14 @@
 			hour: 'numeric',
 			minute: '2-digit'
 		}).format(date);
+	}
+
+	function formatDateTimeInput(value: Date | string | null) {
+		if (!value) return '';
+		const date = typeof value === 'string' ? new Date(value) : value;
+		const pad = (input: number) => `${input}`.padStart(2, '0');
+
+		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 	}
 
 	function tierBadgeClass(tier: string | null | undefined) {
@@ -1055,6 +1074,33 @@
 		</div>
 	{/if}
 
+	<section class="rounded-lg border bg-white p-4 shadow-sm md:p-5">
+		<div class="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+			<div class="space-y-1">
+				<p class="text-muted-foreground text-sm">Recovery workspace</p>
+				<h1 class="text-2xl font-semibold">Hi {getPreferredName(data.patientName)}</h1>
+				<p class="text-muted-foreground max-w-2xl text-sm">
+					Use the navigation below to focus on one recovery task at a time.
+				</p>
+			</div>
+			<div class="grid gap-2 sm:grid-cols-3 lg:min-w-[28rem]">
+				<div class="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2">
+					<p class="text-xs text-emerald-700">Risk</p>
+					<p class="font-semibold text-emerald-950">{data.latestRisk?.tier ?? 'No data'}</p>
+				</div>
+				<div class="rounded-md border border-cyan-100 bg-cyan-50 px-3 py-2">
+					<p class="text-xs text-cyan-700">Sessions</p>
+					<p class="font-semibold text-cyan-950">{data.upcomingSessions.length}</p>
+				</div>
+				<div class="rounded-md border border-amber-100 bg-amber-50 px-3 py-2">
+					<p class="text-xs text-amber-700">Rewards</p>
+					<p class="font-semibold text-amber-950">{data.rewardSummary.totalPoints} pts</p>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	{#if activeView === 'today'}
 	<section class="grid gap-4 md:grid-cols-3">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm md:col-span-2">
 			<Card.Header>
@@ -1139,6 +1185,7 @@
 		</Card.Root>
 	</section>
 
+	{:else if activeView === 'care'}
 	<section class="grid gap-6 xl:grid-cols-3">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -1178,6 +1225,31 @@
 									Join {modeLabel(session.mode)}
 								</Button>
 							{/if}
+							<form
+								method="POST"
+								action="?/rescheduleSession"
+								class="grid gap-2 sm:grid-cols-[1fr_auto]"
+								use:pendingForm={`patient-reschedule-session-${session.id}`}
+							>
+								<input type="hidden" name="sessionId" value={session.id} />
+								<Input
+									name="sessionAt"
+									type="datetime-local"
+									value={formatDateTimeInput(session.sessionAt)}
+								/>
+								<Button
+									type="submit"
+									variant="outline"
+									class="border-blue-200 text-blue-700 hover:bg-blue-50"
+									disabled={activeAction === `patient-reschedule-session-${session.id}`}
+								>
+									{#if activeAction === `patient-reschedule-session-${session.id}`}
+										<LoaderCircleIcon class="size-4 animate-spin" />
+									{:else}
+										Request time
+									{/if}
+								</Button>
+							</form>
 						</div>
 					{/each}
 				{/if}
@@ -1275,6 +1347,7 @@
 		</Card.Root>
 	</section>
 
+	{:else if activeView === 'messages'}
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -1295,7 +1368,10 @@
 							{chatError}
 						</div>
 					{/if}
-					<div class="max-h-[320px] space-y-2 overflow-y-auto rounded-md border bg-blue-50/30 p-3">
+					<div
+						use:keepLatestMessagePinned={{ threshold: 120 }}
+						class="max-h-[320px] space-y-2 overflow-y-auto rounded-md border bg-blue-50/30 p-3 [overflow-anchor:none]"
+					>
 						{#if chatMessages.length === 0}
 							<div class="space-y-2 rounded-md bg-white px-3 py-3 text-sm">
 								<p class="font-medium">Hi {getPreferredName(data.patientName)}, I&apos;m {virtualTherapistProfile.name}.</p>
@@ -1516,6 +1592,7 @@
 		</Card.Root>
 	</section>
 
+	{:else if activeView === 'history'}
 	<section>
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -1749,4 +1826,5 @@
 			</div>
 		</Card.Content>
 	</Card.Root>
+	{/if}
 </div>

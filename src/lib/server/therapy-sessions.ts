@@ -40,6 +40,13 @@ const BUSINESS_DAY_START_HOUR = 8;
 const BUSINESS_DAY_END_HOUR = 18;
 const SLOT_DURATION_MINUTES = 60;
 
+function riskRank(tier: 'low' | 'moderate' | 'high' | 'critical' | null | undefined) {
+	if (tier === 'critical') return 3;
+	if (tier === 'high') return 2;
+	if (tier === 'moderate') return 1;
+	return 0;
+}
+
 function roundToNextSlot(date: Date) {
 	const rounded = new Date(date);
 	rounded.setMilliseconds(0);
@@ -301,6 +308,15 @@ export async function ensureRiskFollowUpSession(args: {
 	tier: 'moderate' | 'high' | 'critical';
 	reason: string;
 }) {
+	const mode: TherapySessionMode = args.tier === 'critical' ? 'in_person' : 'video';
+	const requiresConfirmation = args.tier === 'moderate';
+	const summary =
+		args.tier === 'critical'
+			? 'Automated urgent in-person follow-up scheduled after a critical relapse prediction.'
+			: args.tier === 'high'
+				? 'Automated video follow-up scheduled after a high relapse prediction.'
+				: 'Automated video follow-up proposed after a moderate-risk review.';
+
 	const existingSession = await db.query.therapySession.findFirst({
 		where: and(
 			eq(therapySession.patientId, args.patientId),
@@ -313,14 +329,43 @@ export async function ensureRiskFollowUpSession(args: {
 	});
 
 	if (existingSession) {
+		const existingNotes = parseTherapySessionNotes(existingSession.notes);
+		const shouldUpgrade =
+			riskRank(args.tier) >= riskRank(existingNotes.riskLevel) &&
+			(existingSession.mode !== mode ||
+				existingSession.requiresConfirmation !== requiresConfirmation ||
+				existingNotes.riskLevel !== args.tier);
+
+		if (shouldUpgrade) {
+			const meeting = resolveMeetingFields(existingSession.id, mode);
+			await db
+				.update(therapySession)
+				.set({
+					mode,
+					requiresConfirmation,
+					automationReason: args.reason,
+					meetingUrl: meeting.meetingUrl,
+					meetingCode: meeting.meetingCode,
+					summary,
+					confirmedByUserId: requiresConfirmation ? null : existingSession.confirmedByUserId,
+					confirmedAt: requiresConfirmation ? null : existingSession.confirmedAt,
+					notes: serializeTherapySessionNotes({
+						...existingNotes,
+						riskLevel: args.tier,
+						nextSteps: args.reason
+					})
+				})
+				.where(eq(therapySession.id, existingSession.id));
+		}
+
 		return {
 			sessionId: existingSession.id,
-			created: false
+			created: false,
+			updated: shouldUpgrade
 		};
 	}
 
 	const sessionId = crypto.randomUUID();
-	const mode: TherapySessionMode = args.tier === 'moderate' ? 'video' : 'in_person';
 	const scheduledStartAt = await findNextAvailableTherapistSlot(args.therapistId);
 	const meeting = resolveMeetingFields(sessionId, mode);
 
@@ -332,17 +377,14 @@ export async function ensureRiskFollowUpSession(args: {
 		sessionType: 'therapy',
 		mode,
 		status: 'scheduled',
-		requiresConfirmation: args.tier === 'moderate',
+		requiresConfirmation,
 		durationMinutes: SLOT_DURATION_MINUTES,
 		scheduledStartAt,
 		automationSource: 'risk_engine',
 		automationReason: args.reason,
 		meetingUrl: meeting.meetingUrl,
 		meetingCode: meeting.meetingCode,
-		summary:
-			args.tier === 'moderate'
-				? 'Automated video follow-up proposed after a moderate-risk review.'
-				: 'Automated urgent in-person follow-up scheduled after a high-risk review.',
+		summary,
 		notes: serializeTherapySessionNotes({
 			presentation: '',
 			interventions: [],
@@ -355,7 +397,8 @@ export async function ensureRiskFollowUpSession(args: {
 
 	return {
 		sessionId,
-		created: true
+		created: true,
+		updated: false
 	};
 }
 
@@ -408,6 +451,37 @@ export async function rescheduleTherapySession(args: {
 			confirmedByUserId: args.therapistId,
 			confirmedAt: session.requiresConfirmation ? new Date() : session.confirmedAt,
 			requiresConfirmation: false
+		})
+		.where(eq(therapySession.id, args.sessionId));
+}
+
+export async function reschedulePatientTherapySession(args: {
+	sessionId: string;
+	patientId: string;
+	sessionAt: Date;
+}) {
+	const session = await db.query.therapySession.findFirst({
+		where: and(eq(therapySession.id, args.sessionId), eq(therapySession.patientId, args.patientId))
+	});
+
+	if (!session) {
+		throw new Error('Session not found for this patient.');
+	}
+
+	if (['completed', 'cancelled', 'no_show'].includes(session.status)) {
+		throw new Error('This session can no longer be rescheduled.');
+	}
+
+	await db
+		.update(therapySession)
+		.set({
+			scheduledStartAt: args.sessionAt,
+			requiresConfirmation: true,
+			confirmedByUserId: null,
+			confirmedAt: null,
+			automationReason: session.automationReason
+				? `${session.automationReason} Patient requested a new time.`
+				: 'Patient requested a new session time.'
 		})
 		.where(eq(therapySession.id, args.sessionId));
 }

@@ -1,5 +1,5 @@
 import { relations, sql } from 'drizzle-orm';
-import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { user } from './auth.schema';
 
 const now = sql`(cast(unixepoch('subsecond') * 1000 as integer))`;
@@ -199,8 +199,13 @@ export const patientHistoryFile = sqliteTable(
 		byteSize: integer('byte_size').notNull(),
 		s3Key: text('s3_key').notNull(),
 		checksum: text('checksum'),
+		geminiFileName: text('gemini_file_name'),
+		geminiFileUri: text('gemini_file_uri'),
+		extractionModel: text('extraction_model'),
+		extractionJson: text('extraction_json').notNull().default('{}'),
 		parseStatus: text('parse_status').notNull().default('pending'),
 		parseError: text('parse_error'),
+		extractedAt: integer('extracted_at', { mode: 'timestamp_ms' }),
 		parsedAt: integer('parsed_at', { mode: 'timestamp_ms' }),
 		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(now)
 	},
@@ -431,6 +436,33 @@ export const therapySessionSignal = sqliteTable(
 		index('therapy_session_signal_session_idx').on(table.sessionId),
 		index('therapy_session_signal_sender_idx').on(table.senderUserId),
 		index('therapy_session_signal_created_idx').on(table.createdAt)
+	]
+);
+
+export const appNotification = sqliteTable(
+	'app_notification',
+	{
+		id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		type: text('type').notNull(),
+		title: text('title').notNull(),
+		body: text('body').notNull(),
+		href: text('href'),
+		entityType: text('entity_type'),
+		entityId: text('entity_id'),
+		dedupeKey: text('dedupe_key').notNull(),
+		status: text('status').notNull().default('unread'),
+		readAt: integer('read_at', { mode: 'timestamp_ms' }),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull().default(now)
+	},
+	(table) => [
+		uniqueIndex('app_notification_dedupe_key_idx').on(table.dedupeKey),
+		index('app_notification_user_idx').on(table.userId),
+		index('app_notification_status_idx').on(table.status),
+		index('app_notification_created_idx').on(table.createdAt),
+		index('app_notification_entity_idx').on(table.entityType, table.entityId)
 	]
 );
 
@@ -836,6 +868,13 @@ export const therapySessionSignalRelations = relations(therapySessionSignal, ({ 
 	}),
 	senderUser: one(user, {
 		fields: [therapySessionSignal.senderUserId],
+		references: [user.id]
+	})
+}));
+
+export const appNotificationRelations = relations(appNotification, ({ one }) => ({
+	user: one(user, {
+		fields: [appNotification.userId],
 		references: [user.id]
 	})
 }));

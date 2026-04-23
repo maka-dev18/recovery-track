@@ -6,6 +6,7 @@ import { isAIFeatureEnabled } from '$lib/server/config/ai';
 import { db } from '$lib/server/db';
 import { patientHistoryFile } from '$lib/server/db/schema';
 import { enqueueJob } from '$lib/server/jobs/queue';
+import { processHistoryParseJob } from '$lib/server/jobs/processor';
 import { badRequest, created, forbidden, notFound, rethrowControlFlowError, serverError } from '$lib/server/utils/api';
 import { logError } from '$lib/server/utils/log';
 
@@ -39,6 +40,8 @@ export const POST: RequestHandler = async (event) => {
 			.set({
 				parseStatus: 'pending',
 				parseError: null,
+				extractionJson: '{}',
+				extractedAt: null,
 				parsedAt: null
 			})
 			.where(eq(patientHistoryFile.id, historyFile.id));
@@ -47,11 +50,27 @@ export const POST: RequestHandler = async (event) => {
 			type: 'history.parse',
 			payload: { fileId: historyFile.id }
 		});
+		const jobResult = await processHistoryParseJob(jobId, historyFile.id);
+		const processResult = {
+			processed: jobResult.status === 'done' ? 1 : 0,
+			failed: jobResult.status === 'failed' ? 1 : 0,
+			retry: jobResult.status === 'retry' ? 1 : 0,
+			attempts: jobResult.attempts,
+			retryAt: jobResult.retryAt
+		};
 
 		return created({
 			fileId: historyFile.id,
 			jobId,
-			message: 'File reprocessing has been queued.'
+			processResult,
+			message:
+				processResult.processed > 0
+					? 'File reprocessed and extracted.'
+					: processResult.retry > 0
+						? `File reprocessing hit a temporary error. The next retry is scheduled for ${processResult.retryAt?.toLocaleString()}.`
+						: processResult.failed > 0
+							? 'File reprocessing failed after the retry limit. Check the run details for the parser error.'
+					: 'File reprocessing has been queued.'
 		});
 	} catch (error) {
 		rethrowControlFlowError(error);

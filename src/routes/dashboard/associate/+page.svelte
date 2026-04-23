@@ -9,6 +9,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import * as Table from '$lib/components/ui/table';
 	import { Textarea } from '$lib/components/ui/textarea';
+	import { keepLatestMessagePinned } from '$lib/client/chat-scroll';
 	import { virtualTherapistProfile } from '$lib/shared/virtual-therapist';
 
 	type AssociatePageData = {
@@ -83,7 +84,13 @@
 		mode?: string;
 	} | null;
 
-	let { data, form }: { data: AssociatePageData; form: AssociatePageForm } = $props();
+	type AssociateView = 'report' | 'patients' | 'messages';
+	let {
+		data,
+		form,
+		initialView = 'report'
+	}: { data: AssociatePageData; form: AssociatePageForm; initialView?: AssociateView } = $props();
+	let activeView = $derived(initialView);
 	let activeAction = $state<string | null>(null);
 	let aiDraftByPatientId = $state<Record<string, string>>({});
 	let aiSendingPatientId = $state<string | null>(null);
@@ -126,9 +133,28 @@
 		return fallback;
 	}
 
+	function sortAiConversationsByRecent(conversations: AssociatePageData['aiConversations']) {
+		return [...conversations].sort((left, right) => {
+			const leftTime =
+				left.lastMessageAt?.getTime() ??
+				left.messages.at(-1)?.createdAt.getTime() ??
+				0;
+			const rightTime =
+				right.lastMessageAt?.getTime() ??
+				right.messages.at(-1)?.createdAt.getTime() ??
+				0;
+
+			return rightTime - leftTime || left.patientName.localeCompare(right.patientName);
+		});
+	}
+
+	function chronologicalAiMessages(messages: AssociatePageData['aiConversations'][number]['messages']) {
+		return [...messages].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+	}
+
 	$effect(() => {
 		if (aiConversations.length === 0) {
-			aiConversations = data.aiConversations;
+			aiConversations = sortAiConversationsByRecent(data.aiConversations);
 		}
 	});
 
@@ -142,52 +168,63 @@
 		const reader = stream.getReader();
 		let accumulated = '';
 
-		aiConversations = aiConversations.map((conversation) =>
-			conversation.patientId === patientId
-				? {
-						...conversation,
-						messages: [
-							...conversation.messages,
-							{
-								id: assistantMessageId,
-								role: 'assistant',
-								senderName: virtualTherapistProfile.name,
-								content: '',
-								createdAt: new Date()
-							}
-						]
-				  }
-				: conversation
+		aiConversations = sortAiConversationsByRecent(
+			aiConversations.map((conversation) =>
+				conversation.patientId === patientId
+					? {
+							...conversation,
+							lastMessageAt: new Date(),
+							messages: [
+								...conversation.messages,
+								{
+									id: assistantMessageId,
+									role: 'assistant',
+									senderName: virtualTherapistProfile.name,
+									content: '',
+									createdAt: new Date()
+								}
+							]
+					  }
+					: conversation
+			)
 		);
 
 		while (true) {
 			const { done, value } = await reader.read();
 			if (done) break;
 			accumulated += decoder.decode(value, { stream: true });
-			aiConversations = aiConversations.map((conversation) =>
-				conversation.patientId === patientId
-					? {
-							...conversation,
-							messages: conversation.messages.map((message) =>
-								message.id === assistantMessageId
-									? { ...message, content: accumulated }
-									: message
-							)
-					  }
-					: conversation
+			aiConversations = sortAiConversationsByRecent(
+				aiConversations.map((conversation) =>
+					conversation.patientId === patientId
+						? {
+								...conversation,
+								lastMessageAt: new Date(),
+								messages: conversation.messages.map((message) =>
+									message.id === assistantMessageId
+										? { ...message, content: accumulated, createdAt: new Date() }
+										: message
+								)
+						  }
+						: conversation
+				)
 			);
 		}
 
 		accumulated += decoder.decode();
-		aiConversations = aiConversations.map((conversation) =>
-			conversation.patientId === patientId
-				? {
-						...conversation,
-						messages: conversation.messages.map((message) =>
-							message.id === assistantMessageId ? { ...message, content: accumulated } : message
-						)
-				  }
-				: conversation
+		aiConversations = sortAiConversationsByRecent(
+			aiConversations.map((conversation) =>
+				conversation.patientId === patientId
+					? {
+							...conversation,
+							lastMessageAt: new Date(),
+							messages: conversation.messages.map((message) =>
+								message.id === assistantMessageId
+									? { ...message, content: accumulated, createdAt: new Date() }
+									: message
+							)
+					  }
+					: conversation
+			)
 		);
 	}
 
@@ -211,13 +248,16 @@
 			createdAt: new Date()
 		};
 
-		aiConversations = aiConversations.map((conversation) =>
-			conversation.patientId === patientId
-				? {
-						...conversation,
-						messages: [...conversation.messages, userMessage]
-				  }
-				: conversation
+		aiConversations = sortAiConversationsByRecent(
+			aiConversations.map((conversation) =>
+				conversation.patientId === patientId
+					? {
+							...conversation,
+							lastMessageAt: userMessage.createdAt,
+							messages: [...conversation.messages, userMessage]
+					  }
+					: conversation
+			)
 		);
 		aiDraftByPatientId = { ...aiDraftByPatientId, [patientId]: '' };
 
@@ -257,6 +297,30 @@
 		</div>
 	{/if}
 
+	<section class="rounded-lg border bg-white p-4 shadow-sm md:p-5">
+		<div class="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+			<div class="space-y-1">
+				<p class="text-muted-foreground text-sm">Associate workspace</p>
+				<h1 class="text-2xl font-semibold">Support updates</h1>
+			</div>
+			<div class="grid gap-2 sm:grid-cols-3 lg:min-w-[28rem]">
+				<div class="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2">
+					<p class="text-xs text-emerald-700">Linked patients</p>
+					<p class="font-semibold text-emerald-950">{data.linkedPatients.length}</p>
+				</div>
+				<div class="rounded-md border border-cyan-100 bg-cyan-50 px-3 py-2">
+					<p class="text-xs text-cyan-700">Observations</p>
+					<p class="font-semibold text-cyan-950">{data.recentObservations.length}</p>
+				</div>
+				<div class="rounded-md border border-amber-100 bg-amber-50 px-3 py-2">
+					<p class="text-xs text-amber-700">Threads</p>
+					<p class="font-semibold text-amber-950">{data.therapistConversations.length + data.aiConversations.length}</p>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	{#if activeView === 'report'}
 	<section class="grid gap-4 md:grid-cols-3">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm md:col-span-2">
 			<Card.Header>
@@ -364,6 +428,7 @@
 		</Card.Root>
 	</section>
 
+	{:else if activeView === 'patients'}
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -520,6 +585,7 @@
 		</Card.Root>
 	</section>
 
+	{:else if activeView === 'messages'}
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -633,18 +699,19 @@
 							</div>
 							{#if conversation.lastMessageAt}
 								<Badge variant="outline">{formatDate(conversation.lastMessageAt)}</Badge>
-							{:else}
-								<Badge variant="secondary">No AI updates yet</Badge>
 							{/if}
 						</div>
 
-						<div class="max-h-64 space-y-2 overflow-y-auto rounded-md border bg-white p-3">
+						<div
+							use:keepLatestMessagePinned={{ threshold: 120 }}
+							class="max-h-64 space-y-2 overflow-y-auto rounded-md border bg-white p-3 [overflow-anchor:none]"
+						>
 							{#if conversation.messages.length === 0}
 								<p class="text-muted-foreground text-sm">
 									Start by describing the patient’s sleep, diet, activity, behavior, or relapse concerns.
 								</p>
 							{:else}
-								{#each conversation.messages as message (message.id)}
+								{#each chronologicalAiMessages(conversation.messages) as message (message.id)}
 									<div
 										class={`rounded-md px-3 py-2 text-sm ${message.role === 'associate' ? 'ml-auto max-w-[90%] bg-blue-600 text-white' : 'max-w-[90%] bg-slate-100 text-slate-900'}`}
 									>
@@ -683,4 +750,5 @@
 			</Card.Content>
 		</Card.Root>
 	</section>
+	{/if}
 </div>

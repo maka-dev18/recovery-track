@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { RequestHandler } from './$types';
 import { aiConfig } from '$lib/server/config/ai';
 import { processQueuedJobs } from '$lib/server/jobs/processor';
+import { processTherapySessionReminders } from '$lib/server/notifications';
 import { badRequest, forbidden, ok, serverError } from '$lib/server/utils/api';
 import { logError } from '$lib/server/utils/log';
 
@@ -38,7 +39,8 @@ export const GET: RequestHandler = async (event) => {
 		});
 
 		const result = await processQueuedJobs(parsed.maxJobs ?? 5);
-		return ok(result);
+		const reminders = await processTherapySessionReminders();
+		return ok({ ...result, reminders });
 	} catch (error) {
 		if (error instanceof z.ZodError) {
 			return badRequest('Invalid maxJobs query value.', error.flatten());
@@ -63,7 +65,8 @@ export const POST: RequestHandler = async (event) => {
 				: {};
 		const parsed = requestSchema.parse(payload);
 		const result = await processQueuedJobs(parsed.maxJobs ?? 5);
-		return ok(result);
+		const reminders = await processTherapySessionReminders();
+		return ok({ ...result, reminders });
 	} catch (error) {
 		if (error instanceof z.ZodError) {
 			return badRequest('Invalid queue process payload.', error.flatten());

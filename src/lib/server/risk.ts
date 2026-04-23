@@ -16,6 +16,7 @@ import {
 	therapistPatientAssignment
 } from '$lib/server/db/schema';
 import { ensureRiskFollowUpSession } from '$lib/server/therapy-sessions';
+import { ensureRelapsePredictionFollowUp } from '$lib/server/relapse-prediction';
 import { logWarn } from '$lib/server/utils/log';
 
 export type RiskTier = 'low' | 'moderate' | 'high' | 'critical';
@@ -37,6 +38,7 @@ type RiskFactor = {
 const CHECKIN_LOOKBACK_HOURS = 72;
 const HISTORY_LOOKBACK_DAYS = 180;
 const ALERT_COOLDOWN_HOURS = 6;
+const CHECKIN_TREND_LIMIT = 7;
 
 export function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(max, value));
@@ -49,24 +51,77 @@ export function scoreToTier(score: number): RiskTier {
 	return 'low';
 }
 
-function pointsForCheckin(checkin: {
+function pointsForLatestCheckin(checkin: {
 	mood: number;
 	craving: number;
 	stress: number;
 	sleepHours: number;
+	createdAt: Date;
 }): RiskFactor[] {
 	const moodPoints = clamp((5 - checkin.mood) * 8, 0, 32);
 	const cravingPoints = clamp(checkin.craving * 4.5, 0, 45);
 	const stressPoints = clamp(checkin.stress * 2.5, 0, 25);
 	const sleepDebt = clamp(8 - checkin.sleepHours, 0, 8);
 	const sleepPoints = sleepDebt * 2;
+	const staleHours = (Date.now() - checkin.createdAt.getTime()) / (60 * 60 * 1000);
 
 	return [
+		staleHours > CHECKIN_LOOKBACK_HOURS
+			? { label: 'No patient check-in in the last 72 hours', points: 16 }
+			: null,
 		{ label: 'Mood volatility', points: Math.round(moodPoints) },
 		{ label: 'Craving intensity', points: Math.round(cravingPoints) },
 		{ label: 'Stress level', points: Math.round(stressPoints) },
 		{ label: 'Sleep disruption', points: Math.round(sleepPoints) }
-	].filter((factor) => factor.points > 0);
+	].filter((factor): factor is RiskFactor => Boolean(factor && factor.points > 0));
+}
+
+function pointsForCheckinTrend(
+	checkins: Array<{
+		mood: number;
+		craving: number;
+		stress: number;
+		sleepHours: number;
+	}>
+): RiskFactor[] {
+	if (checkins.length < 2) {
+		return [];
+	}
+
+	const recent = checkins.slice(0, 3);
+	const baseline = checkins.slice(3);
+	if (baseline.length === 0) {
+		return [];
+	}
+
+	const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+	const recentCraving = average(recent.map((checkin) => checkin.craving));
+	const baselineCraving = average(baseline.map((checkin) => checkin.craving));
+	const recentStress = average(recent.map((checkin) => checkin.stress));
+	const baselineStress = average(baseline.map((checkin) => checkin.stress));
+	const recentMood = average(recent.map((checkin) => checkin.mood));
+	const baselineMood = average(baseline.map((checkin) => checkin.mood));
+	const recentSleep = average(recent.map((checkin) => checkin.sleepHours));
+	const baselineSleep = average(baseline.map((checkin) => checkin.sleepHours));
+
+	const factors: RiskFactor[] = [];
+	if (recentCraving - baselineCraving >= 2) {
+		factors.push({ label: 'Craving trend is rising', points: 12 });
+	}
+
+	if (recentStress - baselineStress >= 2) {
+		factors.push({ label: 'Stress trend is rising', points: 8 });
+	}
+
+	if (baselineMood - recentMood >= 1.5) {
+		factors.push({ label: 'Mood trend is declining', points: 8 });
+	}
+
+	if (baselineSleep - recentSleep >= 2) {
+		factors.push({ label: 'Sleep trend is worsening', points: 6 });
+	}
+
+	return factors;
 }
 
 function pointsForObservations(
@@ -80,7 +135,14 @@ function pointsForObservations(
 	}
 
 	const weighted = observations.reduce((sum, observation) => {
-		const categoryBonus = observation.category === 'safety' ? 3 : 0;
+		const categoryBonus =
+			observation.category === 'safety'
+				? 5
+				: observation.category === 'substance_signs'
+					? 4
+					: observation.category === 'behavior'
+						? 2
+						: 0;
 		return sum + observation.severity * 3 + categoryBonus;
 	}, 0);
 
@@ -137,6 +199,7 @@ function pointsForChatSignals(
 
 function pointsForHistorySignals(
 	historySignals: Array<{
+		signalType: string;
 		signalValueJson: string;
 	}>
 ): RiskFactor[] {
@@ -145,7 +208,12 @@ function pointsForHistorySignals(
 	}
 
 	const weights: number[] = [];
+	let relapseHistoryMarkers = 0;
 	for (const signal of historySignals) {
+		if (signal.signalType === 'relapse_trigger' || signal.signalType === 'warning_signal') {
+			relapseHistoryMarkers += 1;
+		}
+
 		try {
 			const parsed = JSON.parse(signal.signalValueJson) as { riskWeight?: unknown };
 			if (typeof parsed.riskWeight === 'number' && Number.isFinite(parsed.riskWeight)) {
@@ -161,7 +229,7 @@ function pointsForHistorySignals(
 	}
 
 	const averageWeight = weights.reduce((sum, value) => sum + value, 0) / weights.length;
-	const points = clamp(Math.round(averageWeight * 0.15), 0, 15);
+	const points = clamp(Math.round(averageWeight * 0.15) + Math.min(8, relapseHistoryMarkers * 2), 0, 20);
 
 	if (points === 0) {
 		return [];
@@ -179,6 +247,7 @@ function pointsForDetectedSignals(
 	signals: Array<{
 		severity: number;
 		signalType: string;
+		source: string;
 	}>
 ): RiskFactor[] {
 	if (signals.length === 0) {
@@ -187,6 +256,8 @@ function pointsForDetectedSignals(
 
 	const peakSeverity = signals.reduce((max, signal) => Math.max(max, signal.severity), 0);
 	const signalTypes = new Set(signals.map((signal) => signal.signalType));
+	const relapseSignals = signals.filter((signal) => signal.signalType === 'relapse_risk');
+	const sources = new Set(relapseSignals.map((signal) => signal.source));
 	let points = clamp(Math.round(peakSeverity * 0.18), 0, 22);
 
 	if (signalTypes.has('safety_risk')) {
@@ -197,6 +268,14 @@ function pointsForDetectedSignals(
 		points = Math.max(points, 18);
 	}
 
+	if (relapseSignals.length >= 3) {
+		points = Math.max(points, 24);
+	}
+
+	if (sources.size >= 2) {
+		points = Math.max(points, 28);
+	}
+
 	if (points === 0) {
 		return [];
 	}
@@ -205,6 +284,61 @@ function pointsForDetectedSignals(
 		{
 			label: 'Care-team clinical signals',
 			points
+		}
+	];
+}
+
+function pointsForCrossSourceEvidence(args: {
+	checkins: Array<{ craving: number; stress: number; sleepHours: number }>;
+	observations: Array<{ severity: number; category: string }>;
+	chatSignals: Array<{ severity: number; labelsJson: string }>;
+	detectedSignals: Array<{ signalType: string; source: string; severity: number }>;
+	historySignals: Array<{ signalType: string }>;
+}): RiskFactor[] {
+	const sources = new Set<string>();
+
+	if (args.checkins.some((checkin) => checkin.craving >= 7 || checkin.stress >= 8 || checkin.sleepHours <= 4)) {
+		sources.add('patient check-ins');
+	}
+
+	if (
+		args.observations.some(
+			(observation) =>
+				observation.severity >= 4 ||
+				observation.category === 'safety' ||
+				observation.category === 'substance_signs'
+		)
+	) {
+		sources.add('associate observations');
+	}
+
+	if (
+		args.chatSignals.some((signal) => {
+			const labels = parseLabels(signal.labelsJson);
+			return signal.severity >= 60 || labels.includes('relapse_intent') || labels.includes('withdrawal_risk');
+		})
+	) {
+		sources.add('patient AI conversations');
+	}
+
+	for (const signal of args.detectedSignals) {
+		if (signal.signalType === 'relapse_risk' || signal.signalType === 'safety_risk') {
+			sources.add(signal.source.replaceAll('_', ' '));
+		}
+	}
+
+	if (args.historySignals.some((signal) => signal.signalType === 'relapse_trigger' || signal.signalType === 'warning_signal')) {
+		sources.add('rehab history');
+	}
+
+	if (sources.size < 2) {
+		return [];
+	}
+
+	return [
+		{
+			label: `Relapse concern appears in ${sources.size} data sources`,
+			points: clamp(8 + sources.size * 4, 0, 24)
 		}
 	];
 }
@@ -412,10 +546,12 @@ export async function recalculatePatientRisk(args: {
 	observationId?: string;
 	triggeredByUserId?: string;
 }) {
-	const latestCheckin = await db.query.patientCheckin.findFirst({
+	const recentCheckins = await db.query.patientCheckin.findMany({
 		where: eq(patientCheckin.patientId, args.patientId),
-		orderBy: (table, { desc }) => [desc(table.createdAt)]
+		orderBy: (table, { desc }) => [desc(table.createdAt)],
+		limit: CHECKIN_TREND_LIMIT
 	});
+	const latestCheckin = recentCheckins[0] ?? null;
 
 	const observationWindowFloor = new Date(Date.now() - CHECKIN_LOOKBACK_HOURS * 60 * 60 * 1000);
 	const recentObservations = await db.query.associateObservation.findMany({
@@ -449,12 +585,23 @@ export async function recalculatePatientRisk(args: {
 	});
 
 	const checkinFactors = latestCheckin
-		? pointsForCheckin({
-				mood: latestCheckin.mood,
-				craving: latestCheckin.craving,
-				stress: latestCheckin.stress,
-				sleepHours: latestCheckin.sleepHours
-			})
+		? [
+				...pointsForLatestCheckin({
+					mood: latestCheckin.mood,
+					craving: latestCheckin.craving,
+					stress: latestCheckin.stress,
+					sleepHours: latestCheckin.sleepHours,
+					createdAt: latestCheckin.createdAt
+				}),
+				...pointsForCheckinTrend(
+					recentCheckins.map((checkin) => ({
+						mood: checkin.mood,
+						craving: checkin.craving,
+						stress: checkin.stress,
+						sleepHours: checkin.sleepHours
+					}))
+				)
+			]
 		: [{ label: 'Missing recent self check-ins', points: 20 }];
 
 	const observationFactors = pointsForObservations(
@@ -473,22 +620,48 @@ export async function recalculatePatientRisk(args: {
 
 	const historyFactors = pointsForHistorySignals(
 		recentHistorySignals.map((signal) => ({
+			signalType: signal.signalType,
 			signalValueJson: signal.signalValueJson
 		}))
 	);
 	const detectedSignalFactors = pointsForDetectedSignals(
 		recentDetectedSignals.map((signal) => ({
 			severity: signal.severity,
-			signalType: signal.signalType
+			signalType: signal.signalType,
+			source: signal.source
 		}))
 	);
+	const crossSourceFactors = pointsForCrossSourceEvidence({
+		checkins: recentCheckins.map((checkin) => ({
+			craving: checkin.craving,
+			stress: checkin.stress,
+			sleepHours: checkin.sleepHours
+		})),
+		observations: recentObservations.map((observation) => ({
+			severity: observation.severity,
+			category: observation.category
+		})),
+		chatSignals: recentChatSignals.map((signal) => ({
+			severity: signal.severity,
+			labelsJson: signal.labelsJson
+		})),
+		detectedSignals: recentDetectedSignals.map((signal) => ({
+			signalType: signal.signalType,
+			source: signal.source,
+			severity: signal.severity
+		})),
+		historySignals: recentHistorySignals.map((signal) => ({
+			signalType: signal.signalType
+		}))
+	});
 
 	const factors = [
 		...checkinFactors,
 		...observationFactors,
 		...chatFactors,
 		...historyFactors,
-		...detectedSignalFactors
+		...detectedSignalFactors,
+		...crossSourceFactors
 	];
 	const totalScore = clamp(
 		factors.reduce((sum, factor) => sum + factor.points, 0),
@@ -542,6 +715,11 @@ export async function recalculatePatientRisk(args: {
 			});
 			followUpSessionId = followUp.sessionId;
 		}
+	}
+
+	const predictionFollowUp = await ensureRelapsePredictionFollowUp(args.patientId);
+	if (predictionFollowUp.sessionId) {
+		followUpSessionId = predictionFollowUp.sessionId;
 	}
 
 	return {

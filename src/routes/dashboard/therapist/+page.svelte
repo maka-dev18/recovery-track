@@ -10,6 +10,41 @@
 	import * as Table from '$lib/components/ui/table';
 	import { Textarea } from '$lib/components/ui/textarea';
 
+	type RelapsePredictionDriver = {
+		source: 'selfReport' | 'associate' | 'careTeam' | 'history' | 'engagementSignals';
+		label: string;
+		points: number;
+		evidence: string;
+		occurredAt: Date | null;
+	};
+
+	type RelapsePredictionView = {
+		patientId: string;
+		patientName: string;
+		patientEmail: string;
+		likelihoodPercent: number;
+		tier: string;
+		flagged: boolean;
+		trend: 'rising' | 'falling' | 'steady';
+		confidence: number;
+		topDrivers: RelapsePredictionDriver[];
+		drivers: Record<RelapsePredictionDriver['source'], RelapsePredictionDriver[]>;
+		sourceCoverage: {
+			riskScores: number;
+			checkins: number;
+			associateObservations: number;
+			aiRiskSignals: number;
+			clinicalSignals: number;
+			historySignals: number;
+			therapySessions: number;
+			noShowSessions: number;
+			openAlerts: number;
+		};
+		latestRiskScore: number | null;
+		latestRiskTier: string | null;
+		generatedAt: Date;
+	};
+
 	type TherapistPageData = {
 		caseload: Array<{
 			patientId: string;
@@ -23,6 +58,7 @@
 				  }
 				| undefined;
 			openAlertCount: number;
+			relapsePrediction: RelapsePredictionView | null;
 		}>;
 		openAlerts: Array<{
 			id: string;
@@ -32,6 +68,10 @@
 			level: string;
 			reason: string;
 			riskScore: number | null;
+			riskFactors: Array<{
+				label: string;
+				points: number;
+			}>;
 			createdAt: Date;
 		}>;
 		recentCheckins: Array<{
@@ -160,7 +200,10 @@
 			narrative: string;
 			recoveryStage: string | null;
 			goals: string[];
+			relapsePrediction: RelapsePredictionView | null;
 		}>;
+		relapsePredictions: RelapsePredictionView[];
+		relapseWatchlist: RelapsePredictionView[];
 		recentSignals: Array<{
 			id: string;
 			patientId: string;
@@ -185,9 +228,25 @@
 		mode?: string;
 	} | null;
 
-	let { data, form }: { data: TherapistPageData; form: TherapistPageForm } = $props();
+	type TherapistView = 'overview' | 'reports' | 'followups' | 'caseload' | 'care';
+	let {
+		data,
+		form,
+		initialView = 'overview'
+	}: { data: TherapistPageData; form: TherapistPageForm; initialView?: TherapistView } = $props();
+	let activeView = $derived(initialView);
 	let activeAction = $state<string | null>(null);
 	let selectedReportPatientId = $state<string | null>(null);
+	let predictionExplanation = $state<{
+		patientId: string;
+		summary: string;
+		keyEvidence: string[];
+		recommendedActions: string[];
+		limitations: string;
+		generatedBy: string;
+	} | null>(null);
+	let predictionExplanationError = $state<string | null>(null);
+	let explainingPredictionPatientId = $state<string | null>(null);
 
 	function pendingForm(node: HTMLFormElement, actionName: string) {
 		return enhance(node, () => {
@@ -220,6 +279,13 @@
 		return 'bg-blue-100 text-blue-700';
 	}
 
+	function predictionBarClass(tier: string | null | undefined) {
+		if (tier === 'critical') return 'bg-red-600';
+		if (tier === 'high') return 'bg-orange-500';
+		if (tier === 'moderate') return 'bg-amber-400';
+		return 'bg-blue-500';
+	}
+
 	function formatDateTimeInput(value: Date | string | null) {
 		if (!value) return '';
 		const date = typeof value === 'string' ? new Date(value) : value;
@@ -248,11 +314,85 @@
 		return data.patientReports.find((report) => report.patientId === selectedReportPatientId) ?? null;
 	}
 
+	function selectedPrediction() {
+		return selectedReport()?.relapsePrediction ?? null;
+	}
+
+	function sourceLabel(source: RelapsePredictionDriver['source']) {
+		if (source === 'selfReport') return 'Patient self-report';
+		if (source === 'associate') return 'Associate reports';
+		if (source === 'careTeam') return 'Therapist and care team';
+		if (source === 'history') return 'Historical rehab records';
+		return 'Risk alerts and signals';
+	}
+
+	function predictionDriverGroups(prediction: RelapsePredictionView | null) {
+		if (!prediction) return [];
+		const sources: Array<RelapsePredictionDriver['source']> = [
+			'selfReport',
+			'associate',
+			'careTeam',
+			'history',
+			'engagementSignals'
+		];
+
+		return sources.map((source) => ({
+			source,
+			label: sourceLabel(source),
+			drivers: prediction.drivers[source] ?? []
+		}));
+	}
+
+	function highestPrediction() {
+		return data.relapsePredictions.reduce<RelapsePredictionView | null>((highest, prediction) => {
+			if (!highest || prediction.likelihoodPercent > highest.likelihoodPercent) {
+				return prediction;
+			}
+
+			return highest;
+		}, null);
+	}
+
+	async function generatePredictionExplanation(patientId: string) {
+		predictionExplanationError = null;
+		explainingPredictionPatientId = patientId;
+
+		try {
+			const response = await fetch(`/api/therapist/patients/${patientId}/relapse-prediction/explain`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' }
+			});
+			const payload = await response.json();
+			if (!response.ok) {
+				throw new Error(payload?.message ?? 'Unable to generate explanation.');
+			}
+
+			predictionExplanation = {
+				patientId,
+				...payload.explanation,
+				generatedBy: payload.generatedBy ?? 'ai'
+			};
+		} catch (error) {
+			predictionExplanationError =
+				error instanceof Error ? error.message : 'Unable to generate explanation.';
+		} finally {
+			explainingPredictionPatientId = null;
+		}
+	}
+
 	$effect(() => {
 		if (!selectedReportPatientId && data.patientReports.length > 0) {
 			selectedReportPatientId = data.patientReports[0].patientId;
 		}
 	});
+
+	const flaggedPredictionCount = $derived(
+		data.relapsePredictions.filter((prediction) => prediction.flagged).length
+	);
+	const risingPredictionCount = $derived(
+		data.relapsePredictions.filter((prediction) => prediction.trend === 'rising').length
+	);
+	const highestRelapsePrediction = $derived(highestPrediction());
 </script>
 
 <div class="space-y-6">
@@ -266,6 +406,33 @@
 		</div>
 	{/if}
 
+	<section class="rounded-lg border bg-white p-4 shadow-sm md:p-5">
+		<div class="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+			<div class="space-y-1">
+				<p class="text-muted-foreground text-sm">Therapist workspace</p>
+				<h1 class="text-2xl font-semibold">Care team dashboard</h1>
+				<p class="text-muted-foreground max-w-2xl text-sm">
+					Navigate by work type so reports, patient follow-ups, and care messages stay separated.
+				</p>
+			</div>
+			<div class="grid gap-2 sm:grid-cols-3 lg:min-w-[28rem]">
+				<div class="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2">
+					<p class="text-xs text-emerald-700">Patients</p>
+					<p class="font-semibold text-emerald-950">{data.caseload.length}</p>
+				</div>
+				<div class="rounded-md border border-red-100 bg-red-50 px-3 py-2">
+					<p class="text-xs text-red-700">Open alerts</p>
+					<p class="font-semibold text-red-950">{data.openAlerts.length}</p>
+				</div>
+				<div class="rounded-md border border-cyan-100 bg-cyan-50 px-3 py-2">
+					<p class="text-xs text-cyan-700">Upcoming</p>
+					<p class="font-semibold text-cyan-950">{data.upcomingSessions.length}</p>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	{#if activeView === 'overview'}
 	<section class="grid gap-4 sm:grid-cols-3">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header class="space-y-1">
@@ -287,6 +454,86 @@
 		</Card.Root>
 	</section>
 
+	<section class="grid gap-4 sm:grid-cols-3">
+		<Card.Root class="border-amber-100 bg-white/90 shadow-sm">
+			<Card.Header class="space-y-1">
+				<Card.Description>Flagged 7-day relapse predictions</Card.Description>
+				<Card.Title class="text-3xl">{flaggedPredictionCount}</Card.Title>
+			</Card.Header>
+		</Card.Root>
+		<Card.Root class="border-amber-100 bg-white/90 shadow-sm">
+			<Card.Header class="space-y-1">
+				<Card.Description>Highest likelihood</Card.Description>
+				<Card.Title class="text-3xl">
+					{highestRelapsePrediction ? `${highestRelapsePrediction.likelihoodPercent}%` : '—'}
+				</Card.Title>
+				{#if highestRelapsePrediction}
+					<p class="text-muted-foreground text-xs">{highestRelapsePrediction.patientName}</p>
+				{/if}
+			</Card.Header>
+		</Card.Root>
+		<Card.Root class="border-amber-100 bg-white/90 shadow-sm">
+			<Card.Header class="space-y-1">
+				<Card.Description>Rising predictions</Card.Description>
+				<Card.Title class="text-3xl">{risingPredictionCount}</Card.Title>
+			</Card.Header>
+		</Card.Root>
+	</section>
+
+	<section>
+		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
+			<Card.Header>
+				<Card.Title>7-day relapse watchlist</Card.Title>
+				<Card.Description>
+					Deterministic prediction using check-ins, associate reports, therapist data, history, and current risk signals.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="space-y-3">
+				{#if data.relapseWatchlist.length === 0}
+					<p class="text-muted-foreground text-sm">No patients are currently flagged above the 40% threshold.</p>
+				{:else}
+					{#each data.relapseWatchlist as prediction (prediction.patientId)}
+						<div class="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+							<div class="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-start">
+								<div>
+									<div class="flex flex-wrap items-center gap-2">
+										<p class="font-medium">{prediction.patientName}</p>
+										<Badge class={tierBadgeClass(prediction.tier)}>{prediction.tier}</Badge>
+										<Badge variant="outline">{prediction.trend}</Badge>
+										{#if prediction.sourceCoverage.openAlerts > 0}
+											<Badge class="bg-red-50 text-red-700 hover:bg-red-50">Open alert</Badge>
+										{/if}
+									</div>
+									<p class="text-muted-foreground mt-1 text-xs">
+										Confidence {prediction.confidence}% · Generated {formatDate(prediction.generatedAt)}
+									</p>
+								</div>
+								<div class="min-w-32 text-right">
+									<p class="text-2xl font-semibold">{prediction.likelihoodPercent}%</p>
+									<p class="text-muted-foreground text-xs">7-day likelihood</p>
+								</div>
+							</div>
+							<div class="mt-3 h-2 rounded-full bg-white">
+								<div
+									class={`h-2 rounded-full ${predictionBarClass(prediction.tier)}`}
+									style={`width: ${prediction.likelihoodPercent}%`}
+								></div>
+							</div>
+							<div class="mt-3 flex flex-wrap gap-2">
+								{#each prediction.topDrivers.slice(0, 2) as driver (driver.source + driver.label)}
+									<Badge variant="outline" class="bg-white">
+										{driver.label} +{driver.points}
+									</Badge>
+								{/each}
+							</div>
+						</div>
+					{/each}
+				{/if}
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	{:else if activeView === 'reports'}
 	<section>
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -315,6 +562,90 @@
 					</div>
 
 					{#if selectedReport()}
+						{#if selectedPrediction()}
+							<div class="rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+								<div class="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
+									<div>
+										<div class="flex flex-wrap items-center gap-2">
+											<p class="text-sm font-medium">7-day relapse prediction</p>
+											<Badge class={tierBadgeClass(selectedPrediction()!.tier)}>
+												{selectedPrediction()!.tier}
+											</Badge>
+											<Badge variant="outline">{selectedPrediction()!.trend}</Badge>
+										</div>
+										<p class="text-muted-foreground mt-2 text-sm">
+											Confidence {selectedPrediction()!.confidence}% · Based on current risk data, check-ins, care-team signals, and history.
+										</p>
+									</div>
+									<div class="text-right">
+										<p class="text-4xl font-semibold">{selectedPrediction()!.likelihoodPercent}%</p>
+										<p class="text-muted-foreground text-xs">likelihood in the next 7 days</p>
+									</div>
+								</div>
+								<div class="mt-4 h-2 rounded-full bg-white">
+									<div
+										class={`h-2 rounded-full ${predictionBarClass(selectedPrediction()!.tier)}`}
+										style={`width: ${selectedPrediction()!.likelihoodPercent}%`}
+									></div>
+								</div>
+								<div class="mt-4 grid gap-4 xl:grid-cols-[1fr_auto]">
+									<div class="flex flex-wrap gap-2">
+										{#if selectedPrediction()!.topDrivers.length === 0}
+											<Badge variant="secondary">No major drivers identified</Badge>
+										{:else}
+											{#each selectedPrediction()!.topDrivers.slice(0, 4) as driver (driver.source + driver.label)}
+												<Badge variant="outline" class="bg-white">
+													{driver.label} +{driver.points}
+												</Badge>
+											{/each}
+										{/if}
+									</div>
+									<Button
+										type="button"
+										variant="outline"
+										class="border-blue-200 text-blue-700 hover:bg-blue-50"
+										disabled={explainingPredictionPatientId === selectedPrediction()!.patientId}
+										onclick={() => generatePredictionExplanation(selectedPrediction()!.patientId)}
+									>
+										{#if explainingPredictionPatientId === selectedPrediction()!.patientId}
+											<LoaderCircleIcon class="size-4 animate-spin" />
+										{:else}
+											Generate AI explanation
+										{/if}
+									</Button>
+								</div>
+								{#if predictionExplanationError}
+									<p class="text-destructive mt-3 text-sm">{predictionExplanationError}</p>
+								{/if}
+								{#if predictionExplanation?.patientId === selectedPrediction()!.patientId}
+									<div class="mt-4 grid gap-3 rounded-md border border-blue-100 bg-white p-3 text-sm">
+										<p>{predictionExplanation.summary}</p>
+										<div>
+											<p class="font-medium">Key evidence</p>
+											<ul class="mt-1 list-disc space-y-1 pl-5">
+												{#each predictionExplanation.keyEvidence as item (item)}
+													<li>{item}</li>
+												{/each}
+											</ul>
+										</div>
+										<div>
+											<p class="font-medium">Recommended actions</p>
+											<ul class="mt-1 list-disc space-y-1 pl-5">
+												{#each predictionExplanation.recommendedActions as item (item)}
+													<li>{item}</li>
+												{/each}
+											</ul>
+										</div>
+										<p class="text-muted-foreground text-xs">{predictionExplanation.limitations}</p>
+										{#if predictionExplanation.generatedBy !== 'ai'}
+											<Badge variant="outline" class="w-fit bg-amber-50 text-amber-800">
+												Generated from deterministic prediction data
+											</Badge>
+										{/if}
+									</div>
+								{/if}
+							</div>
+						{/if}
 						<div class="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
 							<div class="space-y-4">
 								<div class="grid gap-4 md:grid-cols-4">
@@ -383,6 +714,34 @@
 									</div>
 								</div>
 
+								{#if selectedPrediction()}
+									<div class="rounded-lg border border-blue-100 bg-white p-4">
+										<p class="text-sm font-medium">Prediction evidence by source</p>
+										<div class="mt-3 space-y-3">
+											{#each predictionDriverGroups(selectedPrediction()) as group (group.source)}
+												<div class="rounded-md bg-blue-50 px-3 py-2">
+													<div class="flex items-center justify-between gap-2">
+														<p class="text-sm font-medium">{group.label}</p>
+														<Badge variant="outline" class="bg-white">{group.drivers.length}</Badge>
+													</div>
+													{#if group.drivers.length === 0}
+														<p class="text-muted-foreground mt-1 text-xs">No current driver from this source.</p>
+													{:else}
+														<div class="mt-2 space-y-2">
+															{#each group.drivers as driver (driver.label + driver.evidence)}
+																<div class="rounded bg-white px-2 py-2 text-xs">
+																	<p class="font-medium">{driver.label} +{driver.points}</p>
+																	<p class="text-muted-foreground mt-1">{driver.evidence}</p>
+																</div>
+															{/each}
+														</div>
+													{/if}
+												</div>
+											{/each}
+										</div>
+									</div>
+								{/if}
+
 								<div class="rounded-lg border border-blue-100 bg-white p-4">
 									<p class="text-sm font-medium">Recovery stage and goals</p>
 									<p class="text-muted-foreground mt-2 text-xs">
@@ -406,12 +765,13 @@
 		</Card.Root>
 	</section>
 
+	{:else if activeView === 'followups'}
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
 				<Card.Title>Calendar and follow-ups</Card.Title>
 				<Card.Description>
-					High-risk sessions are auto-scheduled, while moderate-risk video follow-ups wait for your confirmation.
+					High relapse likelihood creates a video call at your next open slot; critical likelihood creates an in-person appointment. You can reschedule either.
 				</Card.Description>
 			</Card.Header>
 			<Card.Content class="space-y-4">
@@ -535,6 +895,7 @@
 		</Card.Root>
 	</section>
 
+	{:else if activeView === 'caseload'}
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -548,6 +909,7 @@
 						<Table.Header>
 							<Table.Row>
 								<Table.Head>Patient</Table.Head>
+								<Table.Head>7-day likelihood</Table.Head>
 								<Table.Head>Latest risk</Table.Head>
 								<Table.Head>Open alerts</Table.Head>
 							</Table.Row>
@@ -555,7 +917,7 @@
 						<Table.Body>
 							{#if data.caseload.length === 0}
 								<Table.Row>
-									<Table.Cell colspan={3} class="text-muted-foreground py-6 text-center">
+									<Table.Cell colspan={4} class="text-muted-foreground py-6 text-center">
 										No assigned patients yet.
 									</Table.Cell>
 								</Table.Row>
@@ -565,6 +927,20 @@
 										<Table.Cell>
 											<div class="font-medium">{patient.patientName}</div>
 											<div class="text-muted-foreground text-xs">{patient.patientEmail}</div>
+										</Table.Cell>
+										<Table.Cell>
+											{#if patient.relapsePrediction}
+												<div class="flex flex-col gap-1">
+													<Badge class={tierBadgeClass(patient.relapsePrediction.tier)}>
+														{patient.relapsePrediction.likelihoodPercent}%
+													</Badge>
+													<span class="text-muted-foreground text-xs">
+														{patient.relapsePrediction.trend} · confidence {patient.relapsePrediction.confidence}%
+													</span>
+												</div>
+											{:else}
+												<Badge variant="secondary">No data</Badge>
+											{/if}
 										</Table.Cell>
 										<Table.Cell>
 											{#if patient.latestRisk}
@@ -609,6 +985,15 @@
 							<p class="text-sm">{alert.reason}</p>
 							{#if alert.riskScore !== null}
 								<p class="text-muted-foreground text-xs">Risk score at trigger: {alert.riskScore}</p>
+							{/if}
+							{#if alert.riskFactors.length > 0}
+								<div class="flex flex-wrap gap-2">
+									{#each alert.riskFactors as factor (factor.label)}
+										<Badge variant="outline" class="bg-white">
+											{factor.label} +{factor.points}
+										</Badge>
+									{/each}
+								</div>
 							{/if}
 							<div class="grid gap-2 md:grid-cols-[auto_1fr_auto]">
 							<form
@@ -658,6 +1043,7 @@
 		</Card.Root>
 	</section>
 
+	{:else if activeView === 'care'}
 	<section class="grid gap-6 xl:grid-cols-2">
 		<Card.Root class="border-blue-100 bg-white/90 shadow-sm">
 			<Card.Header>
@@ -1228,4 +1614,5 @@
 			</Card.Content>
 		</Card.Root>
 	</section>
+	{/if}
 </div>

@@ -1,9 +1,11 @@
 import { generateObject } from 'ai';
+import { GoogleGenAI } from '@google/genai';
 import { eq } from 'drizzle-orm';
 import { PDFParse } from 'pdf-parse';
 import { z } from 'zod';
 import { deidentifyText } from '$lib/server/ai/deidentify';
 import { getRiskModel } from '$lib/server/ai/provider';
+import { aiConfig, requireGoogleApiKey } from '$lib/server/config/ai';
 import { db } from '$lib/server/db';
 import { patientHistoryFile, patientHistorySignal } from '$lib/server/db/schema';
 import {
@@ -12,6 +14,7 @@ import {
 	inferTextRiskWeight,
 	type HistorySignalCandidate
 } from '$lib/server/history/parser-core';
+import { isRateLimitError } from '$lib/server/jobs/queue';
 import { syncPatientRecoveryProfile } from '$lib/server/recovery-profile';
 import { recalculatePatientRisk } from '$lib/server/risk';
 import { getS3ObjectBytes } from '$lib/server/storage/s3';
@@ -32,6 +35,225 @@ const pdfSignalSchema = z.object({
 		})
 	)
 });
+
+const geminiHistoryExtractionSchema = z.object({
+	summary: z.string().min(1).max(1000),
+	journeySummary: z.string().min(1).max(1200),
+	baselineRisk: z.number().int().min(0).max(100),
+	recoveryStage: z.string().max(80).optional().nullable(),
+	goals: z.array(z.string().min(1).max(120)).max(10).default([]),
+	mainTriggers: z.array(z.string().min(1).max(100)).max(12).default([]),
+	returnPatterns: z.array(z.string().min(1).max(180)).max(10).default([]),
+	protectiveFactors: z.array(z.string().min(1).max(120)).max(12).default([]),
+	warningSignals: z
+		.array(
+			z.object({
+				label: z.string().min(1).max(100),
+				severity: z.number().int().min(0).max(100),
+				note: z.string().max(400).optional().nullable()
+			})
+		)
+		.max(16)
+		.default([]),
+	timeline: z
+		.array(
+			z.object({
+				date: z.string().max(40).optional().nullable(),
+				event: z.string().min(1).max(240),
+				riskWeight: z.number().int().min(0).max(100).optional().nullable()
+			})
+		)
+		.max(25)
+		.default([]),
+	rawExtractedFacts: z.array(z.string().min(1).max(240)).max(30).default([])
+});
+
+type GeminiHistoryExtraction = z.infer<typeof geminiHistoryExtractionSchema>;
+
+function parseGeminiJson(text: string): unknown {
+	const trimmed = text.trim();
+	if (!trimmed) {
+		throw new Error('Gemini returned an empty extraction response.');
+	}
+
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		const match = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/) ?? trimmed.match(/(\{[\s\S]*\})/);
+		if (!match?.[1]) {
+			throw new Error('Gemini extraction response was not valid JSON.');
+		}
+
+		return JSON.parse(match[1]);
+	}
+}
+
+function parseFlexibleDate(value: string | null | undefined) {
+	if (!value) {
+		return null;
+	}
+
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function signalsFromGeminiExtraction(extraction: GeminiHistoryExtraction): HistorySignalCandidate[] {
+	const signals: HistorySignalCandidate[] = [
+		{
+			signalType: 'history_summary',
+			signalValue: {
+				riskWeight: extraction.baselineRisk,
+				source: 'gemini_file',
+				summary: extraction.summary
+			},
+			confidence: 82,
+			occurredAt: null
+		},
+		{
+			signalType: 'rehab_journey',
+			signalValue: {
+				source: 'gemini_file',
+				summary: extraction.journeySummary,
+				recoveryStage: extraction.recoveryStage ?? null,
+				goals: extraction.goals
+			},
+			confidence: 80,
+			occurredAt: null
+		}
+	];
+
+	for (const trigger of extraction.mainTriggers) {
+		signals.push({
+			signalType: 'relapse_trigger',
+			signalValue: {
+				label: trigger,
+				source: 'gemini_file'
+			},
+			confidence: 78,
+			occurredAt: null
+		});
+	}
+
+	for (const pattern of extraction.returnPatterns) {
+		signals.push({
+			signalType: 'return_pattern',
+			signalValue: {
+				summary: pattern,
+				source: 'gemini_file'
+			},
+			confidence: 78,
+			occurredAt: null
+		});
+	}
+
+	for (const protective of extraction.protectiveFactors) {
+		signals.push({
+			signalType: 'protective_factor',
+			signalValue: {
+				label: protective,
+				source: 'gemini_file'
+			},
+			confidence: 78,
+			occurredAt: null
+		});
+	}
+
+	for (const warning of extraction.warningSignals) {
+		signals.push({
+			signalType: 'warning_signal',
+			signalValue: {
+				label: warning.label,
+				riskWeight: warning.severity,
+				note: warning.note ?? null,
+				source: 'gemini_file'
+			},
+			confidence: 76,
+			occurredAt: null
+		});
+	}
+
+	for (const event of extraction.timeline) {
+		signals.push({
+			signalType: 'historical_record',
+			signalValue: {
+				riskWeight: event.riskWeight ?? extraction.baselineRisk,
+				source: 'gemini_file',
+				row: {
+					date: event.date ?? null,
+					event: event.event
+				}
+			},
+			confidence: 72,
+			occurredAt: parseFlexibleDate(event.date)
+		});
+	}
+
+	return signals;
+}
+
+async function extractHistoryWithGeminiFile(args: {
+	fileName: string;
+	mimeType: string;
+	bytes: Buffer;
+}): Promise<{
+	extraction: GeminiHistoryExtraction;
+	signals: HistorySignalCandidate[];
+	geminiFileName: string | null;
+	geminiFileUri: string | null;
+	model: string;
+}> {
+	const client = new GoogleGenAI({ apiKey: requireGoogleApiKey() });
+	const blob = new Blob([new Uint8Array(args.bytes)], { type: args.mimeType });
+	const uploadedFile = await client.files.upload({
+		file: blob,
+		config: {
+			mimeType: args.mimeType,
+			displayName: args.fileName
+		}
+	});
+
+	if (!uploadedFile.uri) {
+		throw new Error('Gemini file upload did not return a usable file URI.');
+	}
+
+	const response = await client.models.generateContent({
+		model: aiConfig.riskModel,
+		contents: [
+			{
+				role: 'user',
+				parts: [
+					{
+						text: [
+							'Extract structured historical rehabilitation data from the attached patient history file.',
+							'Return objective JSON only. Focus on relapse indicators, warning signs, return-to-use patterns, protective factors, baseline risk, and dated events.',
+							'Do not invent facts. If a field is unknown, use an empty array or null where appropriate.'
+						].join('\n')
+					},
+					{
+						fileData: {
+							fileUri: uploadedFile.uri,
+							mimeType: uploadedFile.mimeType ?? args.mimeType
+						}
+					}
+				]
+			}
+		],
+		config: {
+			responseMimeType: 'application/json',
+			temperature: 0.1,
+			maxOutputTokens: 8192
+		}
+	});
+
+	const extraction = geminiHistoryExtractionSchema.parse(parseGeminiJson(response.text ?? ''));
+	return {
+		extraction,
+		signals: signalsFromGeminiExtraction(extraction),
+		geminiFileName: uploadedFile.name ?? null,
+		geminiFileUri: uploadedFile.uri ?? null,
+		model: aiConfig.riskModel
+	};
+}
 
 async function extractSignalsFromPdfText(
 	pdfText: string
@@ -177,7 +399,7 @@ export async function processHistoryFile(fileId: string) {
 
 	await db
 		.update(patientHistoryFile)
-		.set({ parseStatus: 'parsing', parseError: null, parsedAt: null })
+		.set({ parseStatus: 'parsing', parseError: null, parsedAt: null, extractedAt: null })
 		.where(eq(patientHistoryFile.id, fileId));
 
 	try {
@@ -187,14 +409,49 @@ export async function processHistoryFile(fileId: string) {
 			historyFile.mimeType.includes('pdf') || historyFile.fileName.toLowerCase().endsWith('.pdf');
 
 		let signals: HistorySignalCandidate[] = [];
+		let extractionJson = '{}';
+		let geminiFileName: string | null = null;
+		let geminiFileUri: string | null = null;
+		let extractionModel: string | null = null;
 
-		if (isCsv) {
-			signals = extractSignalsFromCsvText(objectBytes.toString('utf8'));
-		} else if (isPdf) {
-			const pdfText = await parsePdfBuffer(objectBytes);
-			signals = await extractSignalsFromPdfText(pdfText);
-		} else {
+		if (!isCsv && !isPdf) {
 			throw new Error(`Unsupported history file type: ${historyFile.mimeType}`);
+		}
+
+		try {
+			const geminiResult = await extractHistoryWithGeminiFile({
+				fileName: historyFile.fileName,
+				mimeType: historyFile.mimeType,
+				bytes: objectBytes
+			});
+			signals = geminiResult.signals;
+			extractionJson = JSON.stringify(geminiResult.extraction);
+			geminiFileName = geminiResult.geminiFileName;
+			geminiFileUri = geminiResult.geminiFileUri;
+			extractionModel = geminiResult.model;
+		} catch (error) {
+			const extractionError = error instanceof Error ? error.message : String(error);
+			if (isRateLimitError(extractionError)) {
+				throw error;
+			}
+
+			logWarn('Gemini file extraction failed, using local history parser fallback', {
+				error: extractionError,
+				fileId
+			});
+
+			if (isCsv) {
+				signals = extractSignalsFromCsvText(objectBytes.toString('utf8'));
+			} else {
+				const pdfText = await parsePdfBuffer(objectBytes);
+				signals = await extractSignalsFromPdfText(pdfText);
+			}
+			extractionJson = JSON.stringify({
+				summary: 'Gemini file extraction failed. Local fallback parser was used.',
+				error: extractionError,
+				signalCount: signals.length
+			});
+			extractionModel = 'local-fallback';
 		}
 
 		if (signals.length === 0) {
@@ -229,6 +486,11 @@ export async function processHistoryFile(fileId: string) {
 			.set({
 				parseStatus: 'parsed',
 				parseError: null,
+				geminiFileName,
+				geminiFileUri,
+				extractionModel,
+				extractionJson,
+				extractedAt: new Date(),
 				parsedAt: new Date()
 			})
 			.where(eq(patientHistoryFile.id, fileId));
