@@ -195,6 +195,19 @@ describe('processHistoryFile', () => {
 		expect(syncPatientRecoveryProfileMock).toHaveBeenCalledWith('patient-1');
 	});
 
+	it('parses CSV history locally without logging a Gemini fallback warning', async () => {
+		await processHistoryFile('file-1');
+
+		expect(logWarnMock).not.toHaveBeenCalledWith(
+			'Gemini file extraction failed, using local history parser fallback',
+			expect.anything()
+		);
+		expect(pipelineState.updateCalls[1]).toMatchObject({
+			parseStatus: 'parsed',
+			extractionModel: 'local-csv'
+		});
+	});
+
 	it('fails loudly on empty CSV data and does not persist signals', async () => {
 		pipelineState.objectBytes = Buffer.from('Recorded At,Mood Score\n');
 

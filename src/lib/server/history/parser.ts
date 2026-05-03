@@ -69,6 +69,8 @@ const geminiHistoryExtractionSchema = z.object({
 });
 
 type GeminiHistoryExtraction = z.infer<typeof geminiHistoryExtractionSchema>;
+const GEMINI_FILE_POLL_INTERVAL_MS = 1_000;
+const GEMINI_FILE_POLL_ATTEMPTS = 30;
 
 function parseGeminiJson(text: string): unknown {
 	const trimmed = text.trim();
@@ -214,6 +216,28 @@ async function extractHistoryWithGeminiFile(args: {
 
 	if (!uploadedFile.uri) {
 		throw new Error('Gemini file upload did not return a usable file URI.');
+	}
+
+	if (uploadedFile.name) {
+		let fileState = uploadedFile.state ?? null;
+
+		for (let attempt = 0; attempt < GEMINI_FILE_POLL_ATTEMPTS; attempt += 1) {
+			if (fileState && fileState !== 'PROCESSING') {
+				break;
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, GEMINI_FILE_POLL_INTERVAL_MS));
+			const refreshedFile = await client.files.get({ name: uploadedFile.name });
+			fileState = refreshedFile.state ?? null;
+		}
+
+		if (fileState === 'FAILED') {
+			throw new Error('Gemini file processing failed before extraction started.');
+		}
+
+		if (fileState === 'PROCESSING') {
+			throw new Error('Gemini file processing timed out before extraction started.');
+		}
 	}
 
 	const response = await client.models.generateContent({
@@ -418,40 +442,45 @@ export async function processHistoryFile(fileId: string) {
 			throw new Error(`Unsupported history file type: ${historyFile.mimeType}`);
 		}
 
-		try {
-			const geminiResult = await extractHistoryWithGeminiFile({
-				fileName: historyFile.fileName,
-				mimeType: historyFile.mimeType,
-				bytes: objectBytes
-			});
-			signals = geminiResult.signals;
-			extractionJson = JSON.stringify(geminiResult.extraction);
-			geminiFileName = geminiResult.geminiFileName;
-			geminiFileUri = geminiResult.geminiFileUri;
-			extractionModel = geminiResult.model;
-		} catch (error) {
-			const extractionError = error instanceof Error ? error.message : String(error);
-			if (isRateLimitError(extractionError)) {
-				throw error;
-			}
-
-			logWarn('Gemini file extraction failed, using local history parser fallback', {
-				error: extractionError,
-				fileId
-			});
-
-			if (isCsv) {
-				signals = extractSignalsFromCsvText(objectBytes.toString('utf8'));
-			} else {
-				const pdfText = await parsePdfBuffer(objectBytes);
-				signals = await extractSignalsFromPdfText(pdfText);
-			}
+		if (isCsv) {
+			signals = extractSignalsFromCsvText(objectBytes.toString('utf8'));
 			extractionJson = JSON.stringify({
-				summary: 'Gemini file extraction failed. Local fallback parser was used.',
-				error: extractionError,
+				summary: 'CSV history file parsed locally.',
 				signalCount: signals.length
 			});
-			extractionModel = 'local-fallback';
+			extractionModel = 'local-csv';
+		} else {
+			try {
+				const geminiResult = await extractHistoryWithGeminiFile({
+					fileName: historyFile.fileName,
+					mimeType: historyFile.mimeType,
+					bytes: objectBytes
+				});
+				signals = geminiResult.signals;
+				extractionJson = JSON.stringify(geminiResult.extraction);
+				geminiFileName = geminiResult.geminiFileName;
+				geminiFileUri = geminiResult.geminiFileUri;
+				extractionModel = geminiResult.model;
+			} catch (error) {
+				const extractionError = error instanceof Error ? error.message : String(error);
+				if (isRateLimitError(extractionError)) {
+					throw error;
+				}
+
+				logWarn('Gemini file extraction failed, using local history parser fallback', {
+					error: extractionError,
+					fileId
+				});
+
+				const pdfText = await parsePdfBuffer(objectBytes);
+				signals = await extractSignalsFromPdfText(pdfText);
+				extractionJson = JSON.stringify({
+					summary: 'Gemini file extraction failed. Local fallback parser was used.',
+					error: extractionError,
+					signalCount: signals.length
+				});
+				extractionModel = 'local-fallback';
+			}
 		}
 
 		if (signals.length === 0) {
