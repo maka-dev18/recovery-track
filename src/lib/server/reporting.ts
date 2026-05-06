@@ -90,7 +90,7 @@ function summarizePatterns(args: {
 	}
 
 	if (args.cravingAverage >= 6) {
-		patterns.push('Craving scores are persistently high.');
+		patterns.push('Reported substance use urges remain persistently high.');
 	}
 
 	if (args.stressAverage >= 6) {
@@ -211,8 +211,8 @@ export async function buildPatientReport(patientId: string): Promise<PatientRepo
 				? 'Trend analysis shows the recovery profile stabilizing relative to the earlier window.'
 				: 'Trend analysis is broadly stable across the latest entries.',
 		cravingAverage >= 6 || stressAverage >= 6
-			? 'Primary relapse drivers appear to be elevated craving and stress.'
-			: 'Recent self-report data does not show a concentrated craving or stress spike.',
+			? 'Primary relapse drivers appear to be elevated substance use urges and stress.'
+			: 'Recent self-report data does not show a concentrated spike in substance use urges or stress.',
 		signals.length > 0
 			? `${signals.length} recent clinical signals were captured from chats, observations, or therapy sessions.`
 			: 'There are no recent structured clinical signals on file.'

@@ -47,17 +47,21 @@ function detectSignal(text: string, source: string): HeuristicSignal {
 			signalType: 'relapse_risk',
 			severity: /(relapse|use again|drink again)/.test(lowered) ? 76 : 62,
 			confidence: 82,
-			summary: buildSummary(text, `${source} reported relapse-risk language`),
-			tags: ['relapse', 'craving']
+			summary: buildSummary(text, `${source} reported substance use relapse-risk language`),
+			tags: ['relapse', 'substance_use']
 		};
 	}
 
-	if (/(missed session|no show|isolated|not logging in|not responding|stopped)/.test(lowered)) {
+	if (
+		/(missed session|no show|isolated|not logging in|not responding|not replying|stopped answering|gone quiet|unreachable|stopped)/.test(
+			lowered
+		)
+	) {
 		return {
 			signalType: 'engagement_drop',
 			severity: 54,
 			confidence: 74,
-			summary: buildSummary(text, `${source} suggests disengagement from recovery support`),
+			summary: buildSummary(text, `${source} suggests reduced communication or disengagement from recovery support`),
 			tags: ['engagement']
 		};
 	}

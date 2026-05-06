@@ -23,7 +23,7 @@ export function summarizeCheckins(
 	return checkins
 		.map((checkin) => {
 			const note = checkin.note ? ` note=${deidentifyText(checkin.note).slice(0, 120)}` : '';
-			return `${checkin.createdAt.toISOString()}: mood=${checkin.mood}, craving=${checkin.craving}, stress=${checkin.stress}, sleep=${checkin.sleepHours}${note}`;
+			return `${checkin.createdAt.toISOString()}: mood=${checkin.mood}, substance_use_urge=${checkin.craving}, stress=${checkin.stress}, sleep=${checkin.sleepHours}${note}`;
 		})
 		.join('\n');
 }
@@ -106,7 +106,7 @@ export async function buildPatientAiTherapistSystemPrompt(input: {
 		openingInstruction,
 		sessionStyleInstruction,
 		'Use motivational interviewing style and avoid medical diagnosis claims.',
-		'If high-risk intent is expressed, urge immediate human support and emergency services when needed.',
+		'If high-risk intent is expressed, tell the patient to contact their therapist or care team immediately and keep the guidance focused on reaching that therapist support.',
 		`Available data source coverage:\n${evidenceCoverage}`,
 		`Patient personalization profile:\n${personalizationContext}`,
 		`Recent check-in summary:\n${summarizeCheckins(recentCheckins)}`,

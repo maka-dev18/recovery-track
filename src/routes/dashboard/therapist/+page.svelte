@@ -663,7 +663,7 @@
 										<TrendChart data={selectedReport()!.riskSeries} />
 									</div>
 									<div class="rounded-lg border border-blue-100 bg-white p-4">
-										<p class="mb-3 text-sm font-medium">Craving trend</p>
+										<p class="mb-3 text-sm font-medium">Substance use urge trend</p>
 										<TrendChart
 											data={selectedReport()!.cravingSeries}
 											stroke="#ea580c"
@@ -1509,7 +1509,7 @@
 							<Table.Row>
 								<Table.Head>Patient</Table.Head>
 								<Table.Head>Mood</Table.Head>
-								<Table.Head>Craving</Table.Head>
+								<Table.Head>Substance use urge</Table.Head>
 								<Table.Head>Stress</Table.Head>
 								<Table.Head>Sleep</Table.Head>
 							</Table.Row>

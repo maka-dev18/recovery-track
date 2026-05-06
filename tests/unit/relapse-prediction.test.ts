@@ -97,6 +97,29 @@ describe('computeRelapsePrediction', () => {
 		expect(prediction.drivers.careTeam.length).toBeGreaterThanOrEqual(2);
 	});
 
+	it('treats reduced communication as a relapse-risk driver', () => {
+		const prediction = computeRelapsePrediction({
+			patientId: 'patient-1',
+			now,
+			riskScores: [{ score: 28, tier: 'low', createdAt: daysAgo(1) }],
+			clinicalSignals: [
+				{
+					source: 'observation',
+					signalType: 'engagement_drop',
+					severity: 62,
+					confidence: 80,
+					summary: 'Associate reported the patient stopped replying and has gone quiet for several days.',
+					occurredAt: daysAgo(1)
+				}
+			]
+		});
+
+		expect(prediction.likelihoodPercent).toBeGreaterThan(28);
+		expect(prediction.drivers.engagementSignals).toEqual(
+			expect.arrayContaining([expect.objectContaining({ label: 'Reduced communication' })])
+		);
+	});
+
 	it('lets historical relapse markers influence baseline without dominating current risk', () => {
 		const prediction = computeRelapsePrediction({
 			patientId: 'patient-1',

@@ -216,7 +216,7 @@ export async function buildPatientRecommendations(patientId: string): Promise<Co
 			toolKey: 'grounding_reset',
 			title: 'Do a 10-minute grounding reset',
 			description: 'Slow breathing, cold water, short walk, then write the trigger in one sentence.',
-			reason: 'High stress or craving was reported.',
+			reason: 'High stress or substance use urge was reported.',
 			priority: 'important'
 		});
 	}

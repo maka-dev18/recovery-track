@@ -61,7 +61,7 @@ function buildFallbackExplanation(
 		prediction.tier === 'critical' || prediction.tier === 'high'
 			? [
 					'Prioritize direct therapist follow-up today and review the open risk drivers.',
-					'Ask the patient and associate for updates on craving, access to substances, sleep, and immediate supports.',
+					'Ask the patient and associate for updates on substance use urges, access to substances, sleep, and immediate supports.',
 					'Confirm a safety and relapse-prevention plan, including who the patient will contact before using.'
 				]
 			: prediction.tier === 'moderate'

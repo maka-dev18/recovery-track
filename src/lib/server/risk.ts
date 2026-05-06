@@ -70,7 +70,7 @@ function pointsForLatestCheckin(checkin: {
 			? { label: 'No patient check-in in the last 72 hours', points: 16 }
 			: null,
 		{ label: 'Mood volatility', points: Math.round(moodPoints) },
-		{ label: 'Craving intensity', points: Math.round(cravingPoints) },
+		{ label: 'Substance use urge level', points: Math.round(cravingPoints) },
 		{ label: 'Stress level', points: Math.round(stressPoints) },
 		{ label: 'Sleep disruption', points: Math.round(sleepPoints) }
 	].filter((factor): factor is RiskFactor => Boolean(factor && factor.points > 0));
@@ -106,7 +106,7 @@ function pointsForCheckinTrend(
 
 	const factors: RiskFactor[] = [];
 	if (recentCraving - baselineCraving >= 2) {
-		factors.push({ label: 'Craving trend is rising', points: 12 });
+		factors.push({ label: 'Substance use urge trend is rising', points: 12 });
 	}
 
 	if (recentStress - baselineStress >= 2) {
@@ -254,38 +254,62 @@ function pointsForDetectedSignals(
 		return [];
 	}
 
-	const peakSeverity = signals.reduce((max, signal) => Math.max(max, signal.severity), 0);
-	const signalTypes = new Set(signals.map((signal) => signal.signalType));
-	const relapseSignals = signals.filter((signal) => signal.signalType === 'relapse_risk');
-	const sources = new Set(relapseSignals.map((signal) => signal.source));
-	let points = clamp(Math.round(peakSeverity * 0.18), 0, 22);
+	const factors: RiskFactor[] = [];
+	const relapseRelevantSignals = signals.filter(
+		(signal) => signal.signalType === 'relapse_risk' || signal.signalType === 'safety_risk'
+	);
+	if (relapseRelevantSignals.length > 0) {
+		const peakSeverity = relapseRelevantSignals.reduce((max, signal) => Math.max(max, signal.severity), 0);
+		const signalTypes = new Set(relapseRelevantSignals.map((signal) => signal.signalType));
+		const relapseSignals = relapseRelevantSignals.filter((signal) => signal.signalType === 'relapse_risk');
+		const sources = new Set(relapseSignals.map((signal) => signal.source));
+		let points = clamp(Math.round(peakSeverity * 0.18), 0, 22);
 
-	if (signalTypes.has('safety_risk')) {
-		points = Math.max(points, 22);
-	}
-
-	if (signalTypes.has('relapse_risk')) {
-		points = Math.max(points, 18);
-	}
-
-	if (relapseSignals.length >= 3) {
-		points = Math.max(points, 24);
-	}
-
-	if (sources.size >= 2) {
-		points = Math.max(points, 28);
-	}
-
-	if (points === 0) {
-		return [];
-	}
-
-	return [
-		{
-			label: 'Care-team clinical signals',
-			points
+		if (signalTypes.has('safety_risk')) {
+			points = Math.max(points, 22);
 		}
-	];
+
+		if (signalTypes.has('relapse_risk')) {
+			points = Math.max(points, 18);
+		}
+
+		if (relapseSignals.length >= 3) {
+			points = Math.max(points, 24);
+		}
+
+		if (sources.size >= 2) {
+			points = Math.max(points, 28);
+		}
+
+		if (points > 0) {
+			factors.push({
+				label: 'Care-team clinical signals',
+				points
+			});
+		}
+	}
+
+	const engagementSignals = signals.filter((signal) => signal.signalType === 'engagement_drop');
+	if (engagementSignals.length > 0) {
+		const peakSeverity = engagementSignals.reduce((max, signal) => Math.max(max, signal.severity), 0);
+		const sources = new Set(engagementSignals.map((signal) => signal.source));
+		const points = clamp(
+			Math.round(peakSeverity * 0.12) +
+				Math.min(6, engagementSignals.length * 2) +
+				Math.min(4, sources.size * 2),
+			0,
+			18
+		);
+
+		if (points > 0) {
+			factors.push({
+				label: 'Reduced communication',
+				points
+			});
+		}
+	}
+
+	return factors;
 }
 
 function pointsForCrossSourceEvidence(args: {
@@ -325,6 +349,10 @@ function pointsForCrossSourceEvidence(args: {
 		if (signal.signalType === 'relapse_risk' || signal.signalType === 'safety_risk') {
 			sources.add(signal.source.replaceAll('_', ' '));
 		}
+	}
+
+	if (args.detectedSignals.some((signal) => signal.signalType === 'engagement_drop')) {
+		sources.add('reduced communication markers');
 	}
 
 	if (args.historySignals.some((signal) => signal.signalType === 'relapse_trigger' || signal.signalType === 'warning_signal')) {

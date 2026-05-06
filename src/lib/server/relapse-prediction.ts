@@ -158,6 +158,25 @@ function parseRiskWeight(raw: string) {
 	}
 }
 
+function formatConversationRiskLabel(label: string) {
+	switch (label) {
+		case 'craving_spike':
+			return 'substance use urge spike';
+		case 'relapse_intent':
+			return 'stated intent to use substances';
+		case 'self_harm_risk':
+			return 'self-harm risk';
+		case 'hopelessness':
+			return 'hopelessness';
+		case 'withdrawal_risk':
+			return 'withdrawal risk';
+		case 'protective_factor':
+			return 'protective factor';
+		default:
+			return label.replaceAll('_', ' ');
+	}
+}
+
 function resolveTrend(riskScores: Array<{ score: number }>): RelapsePredictionTrend {
 	if (riskScores.length < 2) {
 		return 'steady';
@@ -279,7 +298,7 @@ export function computeRelapsePrediction(input: RelapsePredictionInput): Relapse
 					source: 'selfReport',
 					label: 'Self-report pressure',
 					points: selfPoints,
-					evidence: `Craving ${latestCheckin.craving}/10, stress ${latestCheckin.stress}/10, mood ${latestCheckin.mood}/5, sleep ${latestCheckin.sleepHours}h.`,
+					evidence: `Substance use urge ${latestCheckin.craving}/10, stress ${latestCheckin.stress}/10, mood ${latestCheckin.mood}/5, sleep ${latestCheckin.sleepHours}h.`,
 					occurredAt: latestCheckin.createdAt
 				})
 			);
@@ -300,7 +319,8 @@ export function computeRelapsePrediction(input: RelapsePredictionInput): Relapse
 					source: 'selfReport',
 					label: 'Self-report trend worsening',
 					points,
-					evidence: 'Recent craving or stress averages are higher than the earlier check-in window.',
+					evidence:
+						'Recent substance use urge or stress averages are higher than the earlier check-in window.',
 					occurredAt: latestCheckin?.createdAt ?? null
 				})
 			);
@@ -356,6 +376,31 @@ export function computeRelapsePrediction(input: RelapsePredictionInput): Relapse
 		);
 	}
 
+	const engagementDropSignals = clinicalSignals.filter((signal) => signal.signalType === 'engagement_drop');
+	if (engagementDropSignals.length > 0) {
+		const peakSignal = engagementDropSignals.reduce((peak, signal) =>
+			signal.severity > peak.severity ? signal : peak
+		);
+		const sourceCount = new Set(engagementDropSignals.map((signal) => signal.source)).size;
+		const points = clamp(
+			Math.round(peakSignal.severity * 0.14) +
+				Math.min(6, engagementDropSignals.length * 2) +
+				Math.min(4, sourceCount * 2),
+			0,
+			18
+		);
+		score += points;
+		drivers.engagementSignals.push(
+			driver({
+				source: 'engagementSignals',
+				label: 'Reduced communication',
+				points,
+				evidence: `${peakSignal.source.replaceAll('_', ' ')} noted reduced communication or disengagement: ${peakSignal.summary.slice(0, 160)}`,
+				occurredAt: peakSignal.occurredAt
+			})
+		);
+	}
+
 	const highAiSignals = aiRiskSignals.filter((signal) => {
 		const labels = parseRiskLabels(signal.labelsJson);
 		return signal.severity >= 60 || labels.includes('relapse_intent') || labels.includes('withdrawal_risk');
@@ -370,7 +415,10 @@ export function computeRelapsePrediction(input: RelapsePredictionInput): Relapse
 				source: 'careTeam',
 				label: 'AI conversation risk marker',
 				points,
-				evidence: labels.length > 0 ? labels.join(', ') : `Conversation severity ${peakSignal.severity}`,
+				evidence:
+					labels.length > 0
+						? labels.map((label) => formatConversationRiskLabel(label)).join(', ')
+						: `Conversation severity ${peakSignal.severity}`,
 				occurredAt: peakSignal.createdAt
 			})
 		);

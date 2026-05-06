@@ -1115,7 +1115,7 @@
 						<Input id="mood" name="mood" type="number" min="1" max="5" required value="3" />
 					</div>
 					<div class="grid gap-2">
-						<Label for="craving">Craving (0-10)</Label>
+						<Label for="craving">Urge to use substances (0-10)</Label>
 						<Input id="craving" name="craving" type="number" min="0" max="10" required value="2" />
 					</div>
 					<div class="grid gap-2">
@@ -1691,7 +1691,7 @@
 						<Table.Row>
 							<Table.Head>When</Table.Head>
 							<Table.Head>Mood</Table.Head>
-							<Table.Head>Craving</Table.Head>
+							<Table.Head>Urge to use substances</Table.Head>
 							<Table.Head>Stress</Table.Head>
 							<Table.Head>Sleep</Table.Head>
 							<Table.Head>Note</Table.Head>
