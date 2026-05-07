@@ -65,6 +65,23 @@ export async function createPresignedHistoryUpload(args: {
 	};
 }
 
+export async function uploadHistoryObject(args: {
+	key: string;
+	body: Uint8Array;
+	mimeType: string;
+	byteSize: number;
+}) {
+	await getS3Client().send(
+		new PutObjectCommand({
+			Bucket: getBucketName(),
+			Key: args.key,
+			Body: args.body,
+			ContentType: args.mimeType,
+			ContentLength: args.byteSize
+		})
+	);
+}
+
 async function streamToBuffer(stream: Readable): Promise<Buffer> {
 	const chunks: Buffer[] = [];
 	for await (const chunk of stream) {

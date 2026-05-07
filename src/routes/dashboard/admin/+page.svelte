@@ -143,41 +143,28 @@
 
 		historyUploading = true;
 		try {
-			const presignResponse = await fetch(`/api/admin/patients/${historyPatientId}/history/presign`, {
+			const uploadFormData = new FormData();
+			uploadFormData.set("file", historyFile);
+			uploadFormData.set("fileName", historyFile.name);
+			uploadFormData.set("mimeType", mimeType);
+
+			const uploadResponse = await fetch(`/api/admin/patients/${historyPatientId}/history/upload`, {
 				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					fileName: historyFile.name,
-					mimeType,
-					byteSize: historyFile.size
-				})
+				body: uploadFormData
 			});
-
-			const presignPayload = await presignResponse.json();
-			if (!presignResponse.ok) {
-				throw new Error(presignPayload?.message ?? "Failed to prepare upload URL.");
-			}
-
-			const uploadResponse = await fetch(presignPayload.uploadUrl as string, {
-				method: "PUT",
-				headers: {
-					"content-type": mimeType
-				},
-				body: historyFile
-			});
-
+			const uploadPayload = await uploadResponse.json();
 			if (!uploadResponse.ok) {
-				throw new Error("Cloud upload failed before metadata registration.");
+				throw new Error(uploadPayload?.message ?? "Cloud upload failed before metadata registration.");
 			}
 
 			const completeResponse = await fetch(`/api/admin/patients/${historyPatientId}/history/complete`, {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({
-					key: presignPayload.key,
-					fileName: historyFile.name,
-					mimeType,
-					byteSize: historyFile.size
+					key: uploadPayload.key,
+					fileName: uploadPayload.fileName ?? historyFile.name,
+					mimeType: uploadPayload.mimeType ?? mimeType,
+					byteSize: uploadPayload.byteSize ?? historyFile.size
 				})
 			});
 
